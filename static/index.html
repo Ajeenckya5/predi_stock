@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>predi_stock | Stock Buy & Sell Signals</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0a0e17;
+      --bg-card: #111827;
+      --bg-hover: #1a2234;
+      --border: #1e293b;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --accent: #06b6d4;
+      --accent-dim: #0891b2;
+      --buy: #22c55e;
+      --sell: #ef4444;
+      --hold: #64748b;
+      --gradient-start: #06b6d4;
+      --gradient-end: #3b82f6;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Outfit", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.6;
+    }
+    .layout {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .logo {
+      font-size: 1.5rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .badge {
+      font-size: 0.75rem;
+      background: var(--border);
+      color: var(--text-muted);
+      padding: 0.25rem 0.5rem;
+      border-radius: 6px;
+      font-weight: 500;
+    }
+    .section {
+      margin-bottom: 2rem;
+    }
+    .section-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .scan-bar {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .scan-bar input, .scan-bar select {
+      padding: 0.75rem 1rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.95rem;
+    }
+    .scan-bar input { flex: 1; min-width: 200px; }
+    .scan-bar input::placeholder { color: var(--text-muted); }
+    .scan-bar select { min-width: 120px; cursor: pointer; }
+    .btn {
+      padding: 0.75rem 1.5rem;
+      border-radius: 10px;
+      font-family: inherit;
+      font-weight: 600;
+      font-size: 0.95rem;
+      cursor: pointer;
+      border: none;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+      color: white;
+    }
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(6, 182, 212, 0.35); }
+    .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+    .btn-secondary {
+      background: var(--bg-card);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover { background: var(--bg-hover); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1rem;
+    }
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .card:hover { border-color: var(--accent); box-shadow: 0 4px 20px rgba(6, 182, 212, 0.1); }
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.75rem;
+    }
+    .card-ticker {
+      font-family: "JetBrains Mono", monospace;
+      font-weight: 600;
+      font-size: 1.1rem;
+    }
+    .card-action {
+      font-weight: 700;
+      font-size: 0.85rem;
+      padding: 0.25rem 0.6rem;
+      border-radius: 6px;
+    }
+    .card-action.buy { background: rgba(34, 197, 94, 0.2); color: var(--buy); }
+    .card-action.sell { background: rgba(239, 68, 68, 0.2); color: var(--sell); }
+    .card-action.hold { background: rgba(100, 116, 139, 0.2); color: var(--hold); }
+    .card-price { font-size: 1.35rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .card-change {
+      font-size: 0.9rem;
+      font-family: "JetBrains Mono", monospace;
+    }
+    .card-change.up { color: var(--buy); }
+    .card-change.down { color: var(--sell); }
+    .card-meta {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-top: 0.75rem;
+    }
+    .card-meta span { margin-right: 1rem; }
+    .card-reasons {
+      margin-top: 0.75rem;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .card-reasons ul { margin-left: 1rem; }
+    .score-bar {
+      height: 4px;
+      background: var(--border);
+      border-radius: 2px;
+      margin-top: 0.5rem;
+      overflow: hidden;
+    }
+    .score-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.3s;
+    }
+    .score-fill.bullish { background: var(--buy); }
+    .score-fill.bearish { background: var(--sell); }
+    .score-fill.neutral { background: var(--hold); }
+    .empty-state {
+      text-align: center;
+      padding: 4rem 2rem;
+      color: var(--text-muted);
+    }
+    .empty-state svg { width: 64px; height: 64px; margin-bottom: 1rem; opacity: 0.5; }
+    .spinner {
+      width: 24px;
+      height: 24px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .status { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; color: var(--text-muted); }
+    .error-msg { background: rgba(239, 68, 68, 0.15); color: var(--sell); padding: 0.75rem; border-radius: 8px; margin-top: 1rem; font-size: 0.9rem; }
+    .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+    .tab {
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 500;
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      background: transparent;
+      border: 1px solid transparent;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { background: var(--bg-hover); color: var(--accent); border-color: var(--border); }
+    .disclaimer {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      padding: 1rem;
+      background: var(--bg-card);
+      border-radius: 10px;
+      border-left: 4px solid var(--accent);
+      margin-top: 2rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <header>
+      <div>
+        <h1 class="logo">predi_stock</h1>
+        <span class="badge">Technical Analysis • RSI • MACD • Bollinger</span>
+      </div>
+    </header>
+
+    <section class="section">
+      <div class="section-title">Scan stocks for BUY / SELL signals</div>
+      <div class="scan-bar">
+        <input type="text" id="tickers" placeholder="e.g. AAPL, MSFT, GOOGL, NVDA (comma-separated, or leave empty for default 75 stocks)" />
+        <select id="filter">
+          <option value="">All signals</option>
+          <option value="BUY">Buy only</option>
+          <option value="SELL">Sell only</option>
+          <option value="HOLD">Hold only</option>
+        </select>
+        <button class="btn btn-primary" id="scanBtn">Scan Stocks</button>
+      </div>
+      <div class="status" id="status" style="margin-top: 0.75rem;"></div>
+    </section>
+
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-filter="">All</button>
+      <button class="tab" data-filter="BUY">Buy (0)</button>
+      <button class="tab" data-filter="SELL">Sell (0)</button>
+      <button class="tab" data-filter="HOLD">Hold (0)</button>
+    </div>
+
+    <div id="results"></div>
+
+    <div class="disclaimer">
+      This is research/educational software. Not financial advice. Always do your own research before trading.
+    </div>
+  </div>
+
+  <script>
+    const API = window.location.origin;
+    let lastResults = [];
+
+    async function scan() {
+      const tickersEl = document.getElementById('tickers');
+      const filterEl = document.getElementById('filter');
+      const btn = document.getElementById('scanBtn');
+      const status = document.getElementById('status');
+      const results = document.getElementById('results');
+
+      const tickersRaw = tickersEl.value.trim();
+      const tickers = tickersRaw ? tickersRaw.split(/[\s,]+/).filter(Boolean) : null;
+      const filter = filterEl.value || null;
+
+      btn.disabled = true;
+      status.innerHTML = '<div class="spinner"></div> Scanning...';
+      results.innerHTML = '';
+
+      try {
+        const res = await fetch(`${API}/scan`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tickers, filter_action: filter || undefined }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || res.statusText);
+        }
+        const data = await res.json();
+        lastResults = data.results || [];
+        renderResults(lastResults);
+        updateTabs(lastResults);
+        status.innerHTML = `Found ${lastResults.length} stocks`;
+      } catch (e) {
+        status.innerHTML = '';
+        results.innerHTML = `<div class="error-msg">${e.message}</div>`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function renderResults(items, tabFilter) {
+      const container = document.getElementById('results');
+      const list = tabFilter ? items.filter(r => r.action === tabFilter) : items;
+
+      if (!list.length) {
+        container.innerHTML = '<div class="empty-state"><p>No results. Run a scan or change filters.</p></div>';
+        return;
+      }
+
+      container.innerHTML = '<div class="grid">' + list.map(r => {
+        const changeCls = (r.change_pct || 0) >= 0 ? 'up' : 'down';
+        const scorePct = ((r.score || 0) + 1) / 2 * 100;
+        const scoreCls = r.score > 0.3 ? 'bullish' : r.score < -0.3 ? 'bearish' : 'neutral';
+        const reasons = (r.reasons || []).length ? '<ul>' + (r.reasons || []).map(x => `<li>${x}</li>`).join('') + '</ul>' : '';
+        const curr = (r.ticker || '').includes('.NS') ? '₹' : '$';
+        const price = typeof r.price === 'number' ? r.price.toFixed(2) : (r.price || '—');
+        return `
+          <div class="card">
+            <div class="card-header">
+              <span class="card-ticker">${r.ticker}</span>
+              <span class="card-action ${(r.action || '').toLowerCase()}">${r.action || 'HOLD'}</span>
+            </div>
+            <div class="card-price">${curr}${price}</div>
+            <div class="card-change ${changeCls}">${(r.change_pct != null ? (r.change_pct >= 0 ? '+' : '') + r.change_pct.toFixed(2) : '—')}%</div>
+            <div class="score-bar"><div class="score-fill ${scoreCls}" style="width: ${scorePct}%"></div></div>
+            <div class="card-meta">
+              ${r.rsi != null ? `<span>RSI ${r.rsi}</span>` : ''}
+              ${r.momentum_10d != null ? `<span>MOM ${r.momentum_10d > 0 ? '+' : ''}${r.momentum_10d}%</span>` : ''}
+            </div>
+            ${reasons ? `<div class="card-reasons">${reasons}</div>` : ''}
+          </div>
+        `;
+      }).join('') + '</div>';
+    }
+
+    function updateTabs(items) {
+      const buyC = items.filter(r => r.action === 'BUY').length;
+      const sellC = items.filter(r => r.action === 'SELL').length;
+      const holdC = items.filter(r => r.action === 'HOLD').length;
+      document.querySelectorAll('.tab').forEach(t => {
+        const f = t.dataset.filter;
+        let label = f === '' ? 'All' : f;
+        if (f === 'BUY') label += ` (${buyC})`;
+        if (f === 'SELL') label += ` (${sellC})`;
+        if (f === 'HOLD') label += ` (${holdC})`;
+        t.textContent = label;
+      });
+    }
+
+    document.getElementById('scanBtn').addEventListener('click', scan);
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+        tab.classList.add('active');
+        const f = tab.dataset.filter || null;
+        renderResults(lastResults, f || null);
+      });
+    });
+  </script>
+</body>
+</html>
