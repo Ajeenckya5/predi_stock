@@ -1,12 +1,10 @@
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional, List
 
-from service import train_for_ticker, agent_predict_once_service
 from scanner import scan_tickers
 from ticker_data import search_tickers, get_ticker_count
 
@@ -83,9 +81,15 @@ def scan_endpoint(req: ScanRequest):
 @app.post("/train", response_model=TrainResponse)
 def train_endpoint(req: TrainRequest):
     try:
+        from service import train_for_ticker
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="ML training requires torch/transformers. Use local install with full requirements.txt"
+        )
+    try:
         ckpt, pkl = train_for_ticker(req.ticker, req.country)
     except Exception as e:
-        # Surface pipeline failures (e.g., missing ticker data) as 400 for the client
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     return TrainResponse(
@@ -97,9 +101,14 @@ def train_endpoint(req: TrainRequest):
 
 @app.post("/agent", response_model=AgentResponse)
 def agent_endpoint(req: AgentRequest):
-    # default checkpoint if not passed explicitly
+    try:
+        from service import agent_predict_once_service
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="ML agent requires torch/transformers. Use local install with full requirements.txt"
+        )
     ckpt = req.checkpoint_path or f"news_stock_mdn_{req.ticker.upper()}.pt"
-
     try:
         result = agent_predict_once_service(req.ticker, req.country, ckpt)
     except Exception as e:

@@ -16,10 +16,12 @@ Open http://localhost:8000
 1. Push this repo to GitHub
 2. Go to [render.com](https://render.com) → New → Web Service
 3. Connect your GitHub repo
-4. Render will detect the Python app. Use:
-   - **Build:** `pip install -r requirements.txt`
+4. Use:
+   - **Build:** `pip install -r requirements-render.txt` (lightweight, scanner only)
    - **Start:** `uvicorn app:app --host 0.0.0.0 --port $PORT`
-5. Deploy → Your app will be live at `https://predi-stock.onrender.com` (or your chosen name)
+5. Deploy → App live at `https://predi-stock.onrender.com`
+
+Note: `requirements-render.txt` skips torch/transformers for fast, low-memory deploy. Scan & news work. For ML train/agent, run locally with full `requirements.txt`.
 
 ## API
 
