@@ -85,6 +85,14 @@ def compute_volume_sma_ratio(volume: pd.Series, period: int = 20) -> pd.Series:
     return volume / (sma_vol + 1e-10)
 
 
+def compute_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+    tr1 = high - low
+    tr2 = (high - close.shift(1)).abs()
+    tr3 = (low - close.shift(1)).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    return tr.rolling(period).mean()
+
+
 # ============================================================
 # COMPOSITE SIGNAL LOGIC (Multi-factor scoring)
 # ============================================================
@@ -92,16 +100,24 @@ def compute_volume_sma_ratio(volume: pd.Series, period: int = 20) -> pd.Series:
 @dataclass
 class SignalResult:
     ticker: str
-    action: str       # BUY | SELL | HOLD
-    score: float      # -1 to 1 (negative= bearish, positive= bullish)
+    action: str
+    score: float
     price: float
     change_pct: float
     rsi: Optional[float]
     macd_hist: Optional[float]
-    bb_position: Optional[float]  # -1 to 1 (below lower = -1, above upper = 1)
+    bb_position: Optional[float]
     momentum_10d: Optional[float]
     volume_ratio: Optional[float]
     reasons: List[str]
+    # Buy/Sell levels
+    buy_zone: Optional[tuple]    # (low, high) for BUY - ideal entry
+    stop_loss: Optional[float]
+    take_profit: Optional[float]
+    support: Optional[float]
+    resistance: Optional[float]
+    # News
+    news: List[Dict]
     error: Optional[str] = None
 
 
@@ -130,7 +146,8 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
                 ticker=ticker, action="HOLD", score=0, price=0, change_pct=0,
                 rsi=None, macd_hist=None, bb_position=None, momentum_10d=None,
                 volume_ratio=None, reasons=["Insufficient data"],
-                error="Not enough history"
+                buy_zone=None, stop_loss=None, take_profit=None, support=None, resistance=None,
+                news=[], error="Not enough history"
             )
 
         # Handle multi-index from yf
@@ -237,6 +254,48 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
         else:
             action = "HOLD"
 
+        # Support / Resistance (20-day low/high)
+        low_20 = float(close.rolling(20).min().iloc[-1]) if len(close) >= 20 else price * 0.97
+        high_20 = float(close.rolling(20).max().iloc[-1]) if len(close) >= 20 else price * 1.03
+        support = low_20
+        resistance = high_20
+
+        # ATR for stop placement
+        high_series = data["high"] if "high" in data.columns else close
+        low_series = data["low"] if "low" in data.columns else close
+        atr = compute_atr(high_series, low_series, close, 14).iloc[-1] if len(close) >= 15 else price * 0.02
+        atr = float(atr) if not (pd.isna(atr) or atr <= 0) else price * 0.02
+
+        # Buy zone, SL, TP by action
+        if action == "BUY":
+            buy_zone = (support, min(price * 1.01, support * 1.03))
+            stop_loss = support - atr * 1.5
+            take_profit = resistance + atr * 0.5
+        elif action == "SELL":
+            buy_zone = None
+            stop_loss = high_20 + atr * 1.5
+            take_profit = support - atr * 0.5
+        else:
+            buy_zone = (support, resistance)
+            stop_loss = support - atr
+            take_profit = resistance + atr
+
+        # Fetch news
+        news_list = []
+        try:
+            t = yf.Ticker(ticker)
+            raw = getattr(t, "news", None)
+            if raw is None and callable(getattr(t, "get_news", None)):
+                raw = t.get_news()
+            for n in (raw or [])[:8]:
+                news_list.append({
+                    "title": (n.get("title") or n.get("link") or "")[:120],
+                    "url": n.get("link") or n.get("url") or "",
+                    "publisher": n.get("publisher") or n.get("source") or "",
+                })
+        except Exception:
+            pass
+
         return SignalResult(
             ticker=ticker,
             action=action,
@@ -249,6 +308,12 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
             momentum_10d=float(mom) if not pd.isna(mom) else None,
             volume_ratio=float(vol_ratio) if not pd.isna(vol_ratio) else None,
             reasons=reasons if reasons else ["No strong signals"],
+            buy_zone=buy_zone,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            support=support,
+            resistance=resistance,
+            news=news_list,
         )
 
     except Exception as e:
@@ -256,7 +321,8 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
             ticker=ticker, action="HOLD", score=0, price=0, change_pct=0,
             rsi=None, macd_hist=None, bb_position=None, momentum_10d=None,
             volume_ratio=None, reasons=[],
-            error=str(e)
+            buy_zone=None, stop_loss=None, take_profit=None, support=None, resistance=None,
+            news=[], error=str(e)
         )
 
 
@@ -273,6 +339,7 @@ def scan_tickers(
     results = []
     for t in tickers:
         r = analyze_ticker(t, period=period)
+        buy_zone_ser = [round(r.buy_zone[0], 2), round(r.buy_zone[1], 2)] if r.buy_zone else None
         d = {
             "ticker": r.ticker,
             "action": r.action,
@@ -285,6 +352,12 @@ def scan_tickers(
             "momentum_10d": round(r.momentum_10d, 2) if r.momentum_10d is not None else None,
             "volume_ratio": round(r.volume_ratio, 2) if r.volume_ratio is not None else None,
             "reasons": r.reasons,
+            "buy_zone": buy_zone_ser,
+            "stop_loss": round(r.stop_loss, 2) if r.stop_loss is not None else None,
+            "take_profit": round(r.take_profit, 2) if r.take_profit is not None else None,
+            "support": round(r.support, 2) if r.support is not None else None,
+            "resistance": round(r.resistance, 2) if r.resistance is not None else None,
+            "news": r.news,
             "error": r.error,
         }
         if filter_action and r.action != filter_action:

@@ -8,6 +8,7 @@ from typing import Optional, List
 
 from service import train_for_ticker, agent_predict_once_service
 from scanner import scan_tickers
+from ticker_data import search_tickers, get_ticker_count
 
 # Run with: python app.py (uses uvicorn under the hood)
 # Or manually: uvicorn app:app --reload --host 0.0.0.0 --port 8000
@@ -51,6 +52,19 @@ class ScanRequest(BaseModel):
 @app.get("/")
 def serve_index():
     return FileResponse(Path(__file__).parent / "static" / "index.html")
+
+
+@app.get("/search")
+def search_endpoint(q: str = "", limit: int = 20):
+    """Search stocks by symbol or company name."""
+    results = search_tickers(q, limit=limit)
+    return {"tickers": results}
+
+
+@app.get("/tickers/count")
+def ticker_count_endpoint():
+    """Return total tickers in database."""
+    return {"count": get_ticker_count()}
 
 
 @app.post("/scan")

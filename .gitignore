@@ -18,6 +18,7 @@ build/
 *.pth
 *.pkl
 *.pickle
+.ticker_cache.csv
 
 # IDE
 .idea/

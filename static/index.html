@@ -220,6 +220,47 @@
       border-left: 4px solid var(--accent);
       margin-top: 2rem;
     }
+    .search-wrap { position: relative; flex: 1; min-width: 200px; }
+    .search-wrap input { width: 100%; }
+    .autocomplete {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      margin-top: 2px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      max-height: 240px;
+      overflow-y: auto;
+      z-index: 100;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+    }
+    .autocomplete-item {
+      padding: 0.6rem 1rem;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.9rem;
+    }
+    .autocomplete-item:hover { background: var(--bg-hover); }
+    .autocomplete-item .sym { font-family: "JetBrains Mono", monospace; font-weight: 600; color: var(--accent); }
+    .autocomplete-item .name { color: var(--text-muted); }
+    .search-hint { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem; }
+    .detail-section { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+    .detail-row { display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 0.5rem; }
+    .detail-label { color: var(--text-muted); }
+    .detail-value { font-family: "JetBrains Mono", monospace; font-weight: 500; }
+    .detail-value.buy { color: var(--buy); }
+    .detail-value.sell { color: var(--sell); }
+    .news-list { margin-top: 0.75rem; max-height: 120px; overflow-y: auto; }
+    .news-item { font-size: 0.8rem; margin-bottom: 0.5rem; }
+    .news-item a { color: var(--accent); text-decoration: none; }
+    .news-item a:hover { text-decoration: underline; }
+    .expand-btn { margin-top: 0.5rem; font-size: 0.8rem; color: var(--accent); cursor: pointer; background: none; border: none; padding: 0; }
+    .expand-btn:hover { text-decoration: underline; }
+    .card-detail { display: none; }
+    .card-detail.open { display: block; }
   </style>
 </head>
 <body>
@@ -227,22 +268,26 @@
     <header>
       <div>
         <h1 class="logo">predi_stock</h1>
-        <span class="badge">Technical Analysis • RSI • MACD • Bollinger</span>
+        <span class="badge">Signals • News • Buy/SL/TP Levels</span>
       </div>
     </header>
 
     <section class="section">
-      <div class="section-title">Scan stocks for BUY / SELL signals</div>
+      <div class="section-title">Search any stock & get BUY / SELL signals</div>
       <div class="scan-bar">
-        <input type="text" id="tickers" placeholder="e.g. AAPL, MSFT, GOOGL, NVDA (comma-separated, or leave empty for default 75 stocks)" />
+        <div class="search-wrap">
+          <input type="text" id="tickers" placeholder="Type symbol (AAPL) or company name (Apple) — search 500+ stocks" autocomplete="off" />
+          <div class="autocomplete" id="autocomplete" style="display:none;"></div>
+        </div>
         <select id="filter">
           <option value="">All signals</option>
           <option value="BUY">Buy only</option>
           <option value="SELL">Sell only</option>
           <option value="HOLD">Hold only</option>
         </select>
-        <button class="btn btn-primary" id="scanBtn">Scan Stocks</button>
+        <button class="btn btn-primary" id="scanBtn">Scan</button>
       </div>
+      <div class="search-hint">Leave empty to scan 75 default stocks, or enter 1+ tickers (comma-separated)</div>
       <div class="status" id="status" style="margin-top: 0.75rem;"></div>
     </section>
 
@@ -263,6 +308,54 @@
   <script>
     const API = window.location.origin;
     let lastResults = [];
+    let searchTimeout = null;
+
+    async function searchTickers(q) {
+      if (!q || q.length < 1) return [];
+      try {
+        const r = await fetch(`${API}/search?q=${encodeURIComponent(q)}&limit=15`);
+        const d = await r.json();
+        return d.tickers || [];
+      } catch { return []; }
+    }
+
+    function showAutocomplete(items) {
+      const ac = document.getElementById('autocomplete');
+      if (!items.length) { ac.style.display = 'none'; return; }
+      ac.innerHTML = items.map(t => `
+        <div class="autocomplete-item" data-symbol="${t.symbol}">
+          <span class="sym">${t.symbol}</span>
+          <span class="name">${t.name}</span>
+        </div>
+      `).join('');
+      ac.style.display = 'block';
+      ac.querySelectorAll('.autocomplete-item').forEach(el => {
+        el.addEventListener('click', () => {
+          const inp = document.getElementById('tickers');
+          const cur = inp.value.trim().split(/[\s,]+/).filter(Boolean);
+          const sym = el.dataset.symbol;
+          if (cur.includes(sym)) return;
+          inp.value = cur.length ? cur.join(', ') + ', ' + sym : sym;
+          ac.style.display = 'none';
+          inp.focus();
+        });
+      });
+    }
+
+    document.getElementById('tickers').addEventListener('input', (e) => {
+      const v = e.target.value.trim();
+      if (searchTimeout) clearTimeout(searchTimeout);
+      if (!v || v.includes(',')) { document.getElementById('autocomplete').style.display = 'none'; return; }
+      const lastWord = v.split(/[\s,]+/).pop() || '';
+      if (lastWord.length < 2) { document.getElementById('autocomplete').style.display = 'none'; return; }
+      searchTimeout = setTimeout(async () => {
+        const items = await searchTickers(lastWord);
+        showAutocomplete(items);
+      }, 200);
+    });
+    document.getElementById('tickers').addEventListener('blur', () => {
+      setTimeout(() => document.getElementById('autocomplete').style.display = 'none', 150);
+    });
 
     async function scan() {
       const tickersEl = document.getElementById('tickers');
@@ -311,13 +404,29 @@
         return;
       }
 
-      container.innerHTML = '<div class="grid">' + list.map(r => {
+      const currSym = (t) => (t || '').includes('.NS') ? '₹' : '$';
+      const fmt = (v) => v != null ? (typeof v === 'number' ? v.toFixed(2) : v) : '—';
+      container.innerHTML = '<div class="grid">' + list.map((r, i) => {
         const changeCls = (r.change_pct || 0) >= 0 ? 'up' : 'down';
         const scorePct = ((r.score || 0) + 1) / 2 * 100;
         const scoreCls = r.score > 0.3 ? 'bullish' : r.score < -0.3 ? 'bearish' : 'neutral';
         const reasons = (r.reasons || []).length ? '<ul>' + (r.reasons || []).map(x => `<li>${x}</li>`).join('') + '</ul>' : '';
-        const curr = (r.ticker || '').includes('.NS') ? '₹' : '$';
-        const price = typeof r.price === 'number' ? r.price.toFixed(2) : (r.price || '—');
+        const curr = currSym(r.ticker);
+        const price = fmt(r.price);
+        const buyZone = r.buy_zone ? `${curr}${r.buy_zone[0]} – ${curr}${r.buy_zone[1]}` : '—';
+        const sl = r.stop_loss != null ? curr + fmt(r.stop_loss) : '—';
+        const tp = r.take_profit != null ? curr + fmt(r.take_profit) : '—';
+        const sup = r.support != null ? curr + fmt(r.support) : '—';
+        const res = r.resistance != null ? curr + fmt(r.resistance) : '—';
+        const newsHtml = (r.news || []).length
+          ? '<div class="news-list">' + (r.news || []).slice(0, 5).map(n => {
+              const t = (n.title || '').trim() || 'Read more';
+              const txt = t.length > 80 ? t.slice(0, 80) + '…' : t;
+              const href = n.url ? n.url : '#';
+              return `<div class="news-item"><a href="${href}" target="_blank" rel="noopener">${txt}</a></div>`;
+            }).join('') + '</div>'
+          : '<div class="news-list" style="color:var(--text-muted)">No recent news</div>';
+        const cardId = 'card-' + (r.ticker || '').replace(/\./g, '-') + '-' + i;
         return `
           <div class="card">
             <div class="card-header">
@@ -332,6 +441,16 @@
               ${r.momentum_10d != null ? `<span>MOM ${r.momentum_10d > 0 ? '+' : ''}${r.momentum_10d}%</span>` : ''}
             </div>
             ${reasons ? `<div class="card-reasons">${reasons}</div>` : ''}
+            <button class="expand-btn" onclick="document.getElementById('${cardId}').classList.toggle('open'); this.textContent = document.getElementById('${cardId}').classList.contains('open') ? '▼ Less' : '▶ Full details (Buy/SL/TP, News)';">▶ Full details (Buy/SL/TP, News)</button>
+            <div class="card-detail detail-section" id="${cardId}">
+              <div class="detail-row"><span class="detail-label">Buy Zone</span><span class="detail-value buy">${buyZone}</span></div>
+              <div class="detail-row"><span class="detail-label">Stop Loss (SL)</span><span class="detail-value sell">${sl}</span></div>
+              <div class="detail-row"><span class="detail-label">Take Profit (TP)</span><span class="detail-value buy">${tp}</span></div>
+              <div class="detail-row"><span class="detail-label">Support</span><span class="detail-value">${sup}</span></div>
+              <div class="detail-row"><span class="detail-label">Resistance</span><span class="detail-value">${res}</span></div>
+              <div style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-muted)">Recent News</div>
+              ${newsHtml}
+            </div>
           </div>
         `;
       }).join('') + '</div>';
