@@ -10,6 +10,32 @@ import pandas as pd
 import yfinance as yf
 from typing import List, Dict, Optional
 from dataclasses import dataclass
+from urllib.parse import urljoin
+
+# Yahoo Finance news base (yfinance often returns protocol-relative or site-relative links)
+_YAHOO_NEWS_ORIGIN = "https://finance.yahoo.com"
+
+
+def normalize_news_url(raw: str) -> str:
+    """
+    Turn yfinance news URLs into absolute https URLs on the real publisher/Yahoo domain.
+    Fixes protocol-relative //..., site-relative /news/..., and path-only links so clicks
+    never resolve to our own site's origin.
+    """
+    u = (raw or "").strip()
+    if not u:
+        return ""
+    if u.startswith("//"):
+        return "https:" + u
+    low = u.lower()
+    if low.startswith(("http://", "https://")):
+        scheme = low.split(":", 1)[0]
+        if scheme in ("javascript", "data", "vbscript"):
+            return ""
+        return u
+    if u.startswith("/"):
+        return _YAHOO_NEWS_ORIGIN + u
+    return urljoin(_YAHOO_NEWS_ORIGIN + "/", u)
 
 # ============================================================
 # INDIA STOCK UNIVERSES (NSE)
@@ -602,17 +628,14 @@ def analyze_ticker(
         from datetime import datetime, timedelta
         target_date = (datetime.now() + timedelta(days=target_days)).strftime("%Y-%m-%d")
 
-        # Build news list from raw_news - ensure absolute URLs for external links
-        YF_BASE = "https://finance.yahoo.com"
+        # Build news list from raw_news — absolute external URLs only (see normalize_news_url)
         news_list = []
         for n in (raw_news or [])[:8]:
             raw_url = n.get("link") or n.get("url") or ""
-            url = raw_url.strip()
-            if url and not url.startswith(("http://", "https://")):
-                url = url if url.startswith("/") else "/" + url
-                url = YF_BASE + url
+            url = normalize_news_url(str(raw_url))
+            title = (n.get("title") or "").strip() or "Yahoo Finance article"
             news_list.append({
-                "title": (n.get("title") or n.get("link") or "")[:120],
+                "title": title[:120],
                 "url": url,
                 "publisher": n.get("publisher") or n.get("source") or "",
             })

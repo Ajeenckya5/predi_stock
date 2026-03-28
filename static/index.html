@@ -351,6 +351,25 @@
     let searchTimeout = null;
     const chartControllers = new Map();
 
+    /** Ensure Yahoo/news links never resolve to this app's origin (protocol-relative, relative paths). */
+    function safeNewsHref(raw) {
+      if (!raw || typeof raw !== 'string') return '';
+      let u = raw.trim();
+      if (u.startsWith('//')) u = 'https:' + u;
+      if (/^https?:\/\//i.test(u)) {
+        try {
+          const x = new URL(u);
+          return x.protocol === 'http:' || x.protocol === 'https:' ? u : '';
+        } catch { return ''; }
+      }
+      if (u.startsWith('/')) return 'https://finance.yahoo.com' + u;
+      return 'https://finance.yahoo.com/' + u.replace(/^\/+/, '');
+    }
+
+    function escAttr(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    }
+
     async function loadIndicatorCatalog() {
       const grid = document.getElementById('indicatorGrid');
       try {
@@ -495,12 +514,11 @@
           ? '<div class="news-list">' + (r.news || []).slice(0, 5).map(n => {
               const t = (n.title || '').trim() || 'Read more';
               const txt = t.length > 80 ? t.slice(0, 80) + '…' : t;
-              const u = (n.url || '').trim();
-              const isExternal = u.startsWith('http://') || u.startsWith('https://');
-              if (isExternal) {
-                return `<div class="news-item"><a href="${u}" target="_blank" rel="noopener noreferrer">${txt}</a></div>`;
+              const href = safeNewsHref(n.url || '');
+              if (href) {
+                return `<div class="news-item"><a href="${escAttr(href)}" target="_blank" rel="noopener noreferrer">${escAttr(txt)}</a></div>`;
               }
-              return `<div class="news-item">${txt}</div>`;
+              return `<div class="news-item">${escAttr(txt)}</div>`;
             }).join('') + '</div>'
           : '<div class="news-list" style="color:var(--text-muted)">No recent news</div>';
         const cardId = 'card-' + (r.ticker || '').replace(/\./g, '-') + '-' + i;
