@@ -9,6 +9,7 @@ from scanner import scan_tickers, INDICATOR_CATALOG
 from ticker_data import search_tickers, get_ticker_count, get_nifty50_tickers, load_all_tickers
 from signals_store import add_to_lists, get_lists, clear_lists
 from rlhf import record_feedback, get_stats, reset_weights
+from chart_analysis import build_chart_payload
 
 # Run with: python app.py (uses uvicorn under the hood)
 # Or manually: uvicorn app:app --reload --host 0.0.0.0 --port 8000
@@ -81,6 +82,18 @@ def nifty50_endpoint():
 def indicators_catalog_endpoint():
     """Ids and labels for manual indicator selection (scoring)."""
     return {"indicators": INDICATOR_CATALOG}
+
+
+@app.get("/chart/{ticker}")
+def chart_live_endpoint(ticker: str, period: str = "6mo", interval: str = "1d"):
+    """
+    OHLCV candles + pattern markers & S/R lines for the live chart UI.
+    """
+    payload = build_chart_payload(ticker, period=period, interval=interval)
+    err = payload.get("error")
+    if err:
+        raise HTTPException(status_code=400, detail=str(err))
+    return payload
 
 
 @app.get("/lists")

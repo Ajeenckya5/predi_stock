@@ -176,6 +176,136 @@ def compute_historical_pattern_outcomes(
     return {k: np.mean(v) for k, v in outcomes.items() if len(v) >= 3}
 
 
+def _composite_score(signals: List[PatternSignal]) -> float:
+    if not signals:
+        return 0.0
+    score = 0.0
+    total_w = 0.0
+    for s in signals:
+        w = s.strength * s.confidence
+        score += s.direction * w
+        total_w += w
+    composite = score / total_w if total_w > 0 else 0.0
+    return max(-1.0, min(1.0, composite))
+
+
+def detect_symmetrical_triangle(
+    high: pd.Series, low: pd.Series, close: pd.Series, lookback: int = 25
+) -> Optional[PatternSignal]:
+    """Higher lows + lower highs in recent window → coiling (breakout pending)."""
+    if len(close) < lookback + 5:
+        return None
+    seg_h = high.iloc[-lookback:]
+    seg_l = low.iloc[-lookback:]
+    # Linear regression slope of swing highs vs swing lows (simplified: first vs second half)
+    mid = lookback // 2
+    h1, h2 = seg_h.iloc[:mid].max(), seg_h.iloc[mid:].max()
+    l1, l2 = seg_l.iloc[:mid].min(), seg_l.iloc[mid:].min()
+    lower_highs = h2 < h1 * 0.998
+    higher_lows = l2 > l1 * 1.002
+    if lower_highs and higher_lows and (h1 - l1) > 1e-8:
+        rng = (h2 - l2) / (h1 - l1)
+        if rng < 0.75:  # range compressing
+            direction = 1 if close.iloc[-1] > close.iloc[-lookback] else -1
+            return PatternSignal("symmetrical_triangle", direction, 0.55, 0.58)
+    return None
+
+
+def detect_bb_squeeze(close: pd.Series, period: int = 20, lookback: int = 40) -> Optional[PatternSignal]:
+    """Narrowing Bollinger bandwidth vs recent history → volatility squeeze (often precedes move)."""
+    if len(close) < period + lookback:
+        return None
+    ma = close.rolling(period).mean()
+    sd = close.rolling(period).std()
+    upper = ma + 2 * sd
+    lower = ma - 2 * sd
+    bw = (upper - lower) / (ma.abs() + 1e-8)
+    cur = float(bw.iloc[-1])
+    past = float(bw.iloc[-lookback:-5].median()) if lookback > 5 else float(bw.iloc[-20])
+    if past > 1e-8 and cur < past * 0.72:
+        direction = 1 if close.iloc[-1] > ma.iloc[-1] else -1
+        return PatternSignal("bb_squeeze", direction, 0.62, 0.64)
+    return None
+
+
+def detect_three_line_strike(open_p: pd.Series, high: pd.Series, low: pd.Series, close: pd.Series
+) -> Optional[PatternSignal]:
+    """Three consecutive same-direction candles then reversal bar (bullish/bearish variant)."""
+    if len(close) < 5:
+        return None
+    o3 = open_p.iloc[-4:-1]
+    c3 = close.iloc[-4:-1]
+    last_o, last_c = float(open_p.iloc[-1]), float(close.iloc[-1])
+    bull = all(float(c3.iloc[i]) > float(o3.iloc[i]) for i in range(3))
+    bear = all(float(c3.iloc[i]) < float(o3.iloc[i]) for i in range(3))
+    if bull and last_c < last_o:
+        return PatternSignal("three_line_strike_bear", -1, 0.58, 0.56)
+    if bear and last_c > last_o:
+        return PatternSignal("three_line_strike_bull", 1, 0.58, 0.56)
+    return None
+
+
+def detect_double_bottom_improved(
+    close: pd.Series, high: pd.Series, low: pd.Series, lookback: int = 45
+) -> Optional[PatternSignal]:
+    """Double bottom using swing lows on low series (stronger than close-only)."""
+    if len(low) < lookback:
+        return None
+    swing_high, swing_low = _swing_highs_lows(high, low, close, window=4)
+    troughs = low[swing_low].dropna()
+    if len(troughs) < 2:
+        return None
+    l1, l2 = float(troughs.iloc[-2]), float(troughs.iloc[-1])
+    if min(l1, l2) < 1e-8:
+        return None
+    if abs(l1 - l2) / min(l1, l2) < 0.025 and l2 <= low.iloc[-lookback:].quantile(0.15):
+        return PatternSignal("double_bottom", 1, 0.78, 0.7)
+    return None
+
+
+def detect_double_top_improved(
+    close: pd.Series, high: pd.Series, low: pd.Series, lookback: int = 45
+) -> Optional[PatternSignal]:
+    swing_high, swing_low = _swing_highs_lows(high, low, close, window=4)
+    peaks = high[swing_high].dropna()
+    if len(peaks) < 2:
+        return None
+    h1, h2 = float(peaks.iloc[-2]), float(peaks.iloc[-1])
+    if max(h1, h2) < 1e-8:
+        return None
+    if abs(h1 - h2) / max(h1, h2) < 0.025 and h2 >= high.iloc[-lookback:].quantile(0.85):
+        return PatternSignal("double_top", -1, 0.78, 0.68)
+    return None
+
+
+def detect_enhanced_patterns(
+    data: pd.DataFrame,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    support: float,
+    resistance: float,
+) -> Tuple[List[PatternSignal], float]:
+    """
+    Extra chart-structure patterns (triangle, squeeze, three-line strike).
+    Double top/bottom variants are handled in detect_all_patterns only.
+    """
+    signals: List[PatternSignal] = []
+    open_p = data["open"] if "open" in data.columns else close
+
+    p = detect_symmetrical_triangle(high, low, close)
+    if p:
+        signals.append(p)
+    p = detect_bb_squeeze(close)
+    if p:
+        signals.append(p)
+    p = detect_three_line_strike(open_p, high, low, close)
+    if p:
+        signals.append(p)
+
+    return signals, _composite_score(signals)
+
+
 def detect_all_patterns(
     data: pd.DataFrame, close: pd.Series, support: float, resistance: float
 ) -> Tuple[List[PatternSignal], float]:
@@ -187,12 +317,21 @@ def detect_all_patterns(
     low = data["low"] if "low" in data.columns else close
     open_p = data["open"] if "open" in data.columns else close
 
-    p = detect_double_bottom(close, high, low)
-    if p:
-        signals.append(p)
-    p = detect_double_top(close, high, low)
-    if p:
-        signals.append(p)
+    # Prefer improved double patterns when they fire (replace naive doubles)
+    p_imp = detect_double_bottom_improved(close, high, low)
+    p_naive = detect_double_bottom(close, high, low)
+    if p_imp:
+        signals.append(p_imp)
+    elif p_naive:
+        signals.append(p_naive)
+
+    p_imp_t = detect_double_top_improved(close, high, low)
+    p_naive_t = detect_double_top(close, high, low)
+    if p_imp_t:
+        signals.append(p_imp_t)
+    elif p_naive_t:
+        signals.append(p_naive_t)
+
     signals.extend(detect_candlestick_patterns(open_p, high, low, close))
     p = detect_trend_pattern(close)
     if p:
@@ -204,16 +343,12 @@ def detect_all_patterns(
     if p:
         signals.append(p)
 
-    if not signals:
-        return [], 0.0
+    # Structure patterns (triangle, BB squeeze, three-line strike)
+    extra, _ = detect_enhanced_patterns(data, close, high, low, support, resistance)
+    have = {(s.name, s.direction) for s in signals}
+    for s in extra:
+        if (s.name, s.direction) not in have:
+            signals.append(s)
+            have.add((s.name, s.direction))
 
-    # Weight by direction * strength * confidence
-    score = 0.0
-    total_w = 0.0
-    for s in signals:
-        w = s.strength * s.confidence
-        score += s.direction * w
-        total_w += w
-    composite = score / total_w if total_w > 0 else 0.0
-    composite = max(-1.0, min(1.0, composite))
-    return signals, composite
+    return signals, _composite_score(signals)

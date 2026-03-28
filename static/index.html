@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
   <style>
     :root {
       --bg: #0a0e17;
@@ -272,6 +273,12 @@
     .indicator-grid label { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; color: var(--text-muted); }
     .indicator-grid input { accent-color: var(--accent); }
     .scoring-note { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.35rem; }
+    .chart-wrap { display: none; width: 100%; height: 320px; margin-top: 0.75rem; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: #0c1222; }
+    .chart-wrap.open { display: block; }
+    .chart-legend { font-size: 0.72rem; color: var(--text-muted); margin-top: 0.35rem; line-height: 1.4; }
+    .pattern-pill { display: inline-block; font-size: 0.7rem; padding: 0.15rem 0.4rem; border-radius: 4px; margin: 0.15rem 0.25rem 0 0; background: var(--border); color: var(--text-muted); }
+    .pattern-pill.bull { color: var(--buy); border: 1px solid rgba(34,197,94,0.35); }
+    .pattern-pill.bear { color: var(--sell); border: 1px solid rgba(239,68,68,0.35); }
   </style>
 </head>
 <body>
@@ -342,6 +349,7 @@
     const API = window.location.origin;
     let lastResults = [];
     let searchTimeout = null;
+    const chartControllers = new Map();
 
     async function loadIndicatorCatalog() {
       const grid = document.getElementById('indicatorGrid');
@@ -458,6 +466,9 @@
     }
 
     function renderResults(items, tabFilter) {
+      chartControllers.forEach(({ chart }) => { try { chart.remove(); } catch (e) {} });
+      chartControllers.clear();
+
       const container = document.getElementById('results');
       const list = tabFilter ? items.filter(r => r.action === tabFilter) : items;
 
@@ -493,6 +504,7 @@
             }).join('') + '</div>'
           : '<div class="news-list" style="color:var(--text-muted)">No recent news</div>';
         const cardId = 'card-' + (r.ticker || '').replace(/\./g, '-') + '-' + i;
+        const chartWrapId = 'lw-' + (r.ticker || 'x').replace(/\./g, '-') + '-' + i;
         return `
           <div class="card">
             <div class="card-header">
@@ -519,6 +531,9 @@
               <button class="feedback-btn correct" title="Correct" data-ticker="${r.ticker}" data-action="${r.action || 'BUY'}" data-correct="true" data-factors="${(r.factors_used || []).join(',')}">👍</button>
               <button class="feedback-btn incorrect" title="Incorrect" data-ticker="${r.ticker}" data-action="${r.action || 'SELL'}" data-correct="false" data-factors="${(r.factors_used || []).join(',')}">👎</button>
             </div>
+            <button type="button" class="expand-btn chart-toggle" data-ticker="${r.ticker}" data-chart-id="${chartWrapId}">▶ Live chart + pattern map</button>
+            <div class="chart-wrap" id="${chartWrapId}" data-ticker="${r.ticker}"></div>
+            <div class="chart-legend" id="${chartWrapId}-legend" style="display:none;"></div>
             <button class="expand-btn" onclick="document.getElementById('${cardId}').classList.toggle('open'); this.textContent = document.getElementById('${cardId}').classList.contains('open') ? '▼ Less' : '▶ Full details (Buy/SL/TP, News)';">▶ Full details (Buy/SL/TP, News)</button>
             <div class="card-detail detail-section" id="${cardId}">
               <div class="detail-row"><span class="detail-label">Buy Zone</span><span class="detail-value buy">${buyZone}</span></div>
@@ -599,6 +614,79 @@
         btn.style.opacity = '1';
         btn.disabled = true;
       } catch (err) { console.warn(err); }
+    });
+
+    document.body.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.chart-toggle');
+      if (!btn) return;
+      const ticker = btn.dataset.ticker;
+      const cid = btn.dataset.chartId;
+      const wrap = document.getElementById(cid);
+      const legend = document.getElementById(cid + '-legend');
+      if (!wrap || !ticker) return;
+      const isOpen = wrap.classList.contains('open');
+      if (isOpen) {
+        wrap.classList.remove('open');
+        if (legend) legend.style.display = 'none';
+        btn.textContent = '▶ Live chart + pattern map';
+        return;
+      }
+      wrap.classList.add('open');
+      if (legend) legend.style.display = 'block';
+      btn.textContent = '▼ Hide chart';
+      if (chartControllers.has(cid)) {
+        const { chart } = chartControllers.get(cid);
+        chart.applyOptions({ width: wrap.clientWidth });
+        chart.timeScale().fitContent();
+        return;
+      }
+      wrap.innerHTML = '<div style="padding:1rem;color:var(--text-muted)">Loading chart…</div>';
+      try {
+        const res = await fetch(`${API}/chart/${encodeURIComponent(ticker)}?period=6mo`);
+        const p = await res.json();
+        if (!res.ok) throw new Error(p.detail || p.error || 'Chart request failed');
+        wrap.innerHTML = '';
+        const LW = window.LightweightCharts;
+        if (!LW) throw new Error('Chart library failed to load');
+        const chart = LW.createChart(wrap, {
+          layout: { background: { type: 'solid', color: '#0c1222' }, textColor: '#94a3b8' },
+          grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
+          width: wrap.clientWidth,
+          height: 300,
+          timeScale: { borderColor: '#1e293b' },
+          rightPriceScale: { borderColor: '#1e293b' },
+        });
+        const series = chart.addCandlestickSeries({
+          upColor: '#22c55e', downColor: '#ef4444',
+          borderVisible: false, wickUpColor: '#22c55e', wickDownColor: '#ef4444',
+        });
+        series.setData(p.candles || []);
+        if (p.markers && p.markers.length) series.setMarkers(p.markers);
+        (p.price_lines || []).forEach((pl) => {
+          series.createPriceLine({
+            price: pl.price,
+            color: pl.color,
+            lineWidth: 2,
+            lineStyle: 2,
+            axisLabelVisible: true,
+            title: pl.title || '',
+          });
+        });
+        chart.timeScale().fitContent();
+        chartControllers.set(cid, { chart });
+        const ro = new ResizeObserver(() => { chart.applyOptions({ width: wrap.clientWidth }); });
+        ro.observe(wrap);
+        if (legend) {
+          const pills = (p.pattern_signals || []).map((s) => {
+            const cls = s.direction > 0 ? 'bull' : s.direction < 0 ? 'bear' : '';
+            const dir = s.direction > 0 ? 'bull' : s.direction < 0 ? 'bear' : 'neu';
+            return `<span class="pattern-pill ${cls}" title="${dir}">${String(s.name).replace(/_/g, ' ')} · str ${s.strength}</span>`;
+          }).join(' ');
+          legend.innerHTML = `<div><strong>Pattern score:</strong> ${p.composite_pattern_score != null ? Number(p.composite_pattern_score).toFixed(3) : '—'} &nbsp;|&nbsp; Lines: support (green), resistance (red). Markers: SH swing high, SL swing low.</div><div style="margin-top:0.35rem">${pills || '<span class="pattern-pill">No named patterns</span>'}</div>`;
+        }
+      } catch (err) {
+        wrap.innerHTML = `<div class="error-msg" style="padding:1rem">${err.message}</div>`;
+      }
     });
 
     document.getElementById('scanBtn').addEventListener('click', scan);
