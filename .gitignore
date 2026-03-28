@@ -19,6 +19,9 @@ build/
 *.pkl
 *.pickle
 .ticker_cache.csv
+.signals_store.json
+.rlhf_weights.json
+.rlhf_feedback.json
 
 # IDE
 .idea/

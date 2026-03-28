@@ -261,6 +261,11 @@
     .expand-btn:hover { text-decoration: underline; }
     .card-detail { display: none; }
     .card-detail.open { display: block; }
+    .feedback-row { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; font-size: 0.8rem; color: var(--text-muted); }
+    .feedback-btn { background: none; border: none; cursor: pointer; padding: 0.25rem; font-size: 1.1rem; opacity: 0.7; }
+    .feedback-btn:hover { opacity: 1; }
+    .feedback-btn.correct { color: var(--buy); }
+    .feedback-btn.incorrect { color: var(--sell); }
   </style>
 </head>
 <body>
@@ -268,7 +273,7 @@
     <header>
       <div>
         <h1 class="logo">predi_stock</h1>
-        <span class="badge">Signals • News • Buy/SL/TP Levels</span>
+        <span class="badge">Signals • News • RLHF • Improves with feedback</span>
       </div>
     </header>
 
@@ -283,19 +288,32 @@
           <option value="">All signals</option>
           <option value="BUY">Buy only</option>
           <option value="SELL">Sell only</option>
-          <option value="HOLD">Hold only</option>
         </select>
+        <select id="universe">
+          <option value="">Default (US + India)</option>
+          <option value="nifty50">Nifty 50 only</option>
+          <option value="all">All stocks</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.9rem;cursor:pointer;">
+          <input type="checkbox" id="saveToLists" />
+          Save to lists
+        </label>
         <button class="btn btn-primary" id="scanBtn">Scan</button>
       </div>
-      <div class="search-hint">Leave empty to scan 75 default stocks, or enter 1+ tickers (comma-separated)</div>
+      <div class="search-hint">Leave empty to scan default (US + India), or choose "All stocks" to scan S&P 500 + Nifty 50/Next 50/500 + BSE Sensex + Russell 1000</div>
       <div class="status" id="status" style="margin-top: 0.75rem;"></div>
     </section>
+
+    <div class="section" id="savedListsSection" style="display:none;">
+      <div class="section-title">My BUY / SELL lists</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;" id="savedLists"></div>
+      <button class="btn btn-secondary" id="clearListsBtn" style="margin-top:0.5rem;">Clear lists</button>
+    </div>
 
     <div class="tabs" id="tabs">
       <button class="tab active" data-filter="">All</button>
       <button class="tab" data-filter="BUY">Buy (0)</button>
       <button class="tab" data-filter="SELL">Sell (0)</button>
-      <button class="tab" data-filter="HOLD">Hold (0)</button>
     </div>
 
     <div id="results"></div>
@@ -367,6 +385,7 @@
       const tickersRaw = tickersEl.value.trim();
       const tickers = tickersRaw ? tickersRaw.split(/[\s,]+/).filter(Boolean) : null;
       const filter = filterEl.value || null;
+      const universe = document.getElementById('universe').value || null;
 
       btn.disabled = true;
       status.innerHTML = '<div class="spinner"></div> Scanning...';
@@ -376,7 +395,12 @@
         const res = await fetch(`${API}/scan`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tickers, filter_action: filter || undefined }),
+          body: JSON.stringify({
+            tickers: tickers || undefined,
+            filter_action: filter || undefined,
+            universe: universe || undefined,
+            save_to_lists: document.getElementById('saveToLists').checked,
+          }),
         });
         if (!res.ok) {
           const err = await res.json();
@@ -387,6 +411,7 @@
         renderResults(lastResults);
         updateTabs(lastResults);
         status.innerHTML = `Found ${lastResults.length} stocks`;
+        if (document.getElementById('saveToLists').checked) loadSavedLists();
       } catch (e) {
         status.innerHTML = '';
         results.innerHTML = `<div class="error-msg">${e.message}</div>`;
@@ -422,8 +447,12 @@
           ? '<div class="news-list">' + (r.news || []).slice(0, 5).map(n => {
               const t = (n.title || '').trim() || 'Read more';
               const txt = t.length > 80 ? t.slice(0, 80) + '…' : t;
-              const href = n.url ? n.url : '#';
-              return `<div class="news-item"><a href="${href}" target="_blank" rel="noopener">${txt}</a></div>`;
+              const u = (n.url || '').trim();
+              const isExternal = u.startsWith('http://') || u.startsWith('https://');
+              if (isExternal) {
+                return `<div class="news-item"><a href="${u}" target="_blank" rel="noopener noreferrer">${txt}</a></div>`;
+              }
+              return `<div class="news-item">${txt}</div>`;
             }).join('') + '</div>'
           : '<div class="news-list" style="color:var(--text-muted)">No recent news</div>';
         const cardId = 'card-' + (r.ticker || '').replace(/\./g, '-') + '-' + i;
@@ -438,9 +467,20 @@
             <div class="score-bar"><div class="score-fill ${scoreCls}" style="width: ${scorePct}%"></div></div>
             <div class="card-meta">
               ${r.rsi != null ? `<span>RSI ${r.rsi}</span>` : ''}
+              ${r.stochastic_k != null ? `<span>Stoch ${r.stochastic_k}</span>` : ''}
+              ${r.williams_r != null ? `<span>W%R ${r.williams_r}</span>` : ''}
+              ${r.adx != null ? `<span>ADX ${r.adx}</span>` : ''}
               ${r.momentum_10d != null ? `<span>MOM ${r.momentum_10d > 0 ? '+' : ''}${r.momentum_10d}%</span>` : ''}
+              ${r.news_sentiment != null ? `<span>News ${r.news_sentiment > 0 ? '+' : ''}${r.news_sentiment}</span>` : ''}
+              ${(r.pattern_signals || []).length ? `<span>Patterns: ${r.pattern_signals.join(', ')}</span>` : ''}
             </div>
+            ${r.target_achieve_date ? `<div class="card-timeline" style="font-size:0.8rem;color:var(--accent);margin-top:0.5rem;">Target: ~${r.target_achieve_date} (${r.target_achieve_days || '?'} days)</div>` : ''}
             ${reasons ? `<div class="card-reasons">${reasons}</div>` : ''}
+            <div class="feedback-row">
+              <span>Help algo improve:</span>
+              <button class="feedback-btn correct" title="Correct" data-ticker="${r.ticker}" data-action="${r.action || 'HOLD'}" data-correct="true" data-factors="${(r.factors_used || []).join(',')}">👍</button>
+              <button class="feedback-btn incorrect" title="Incorrect" data-ticker="${r.ticker}" data-action="${r.action || 'HOLD'}" data-correct="false" data-factors="${(r.factors_used || []).join(',')}">👎</button>
+            </div>
             <button class="expand-btn" onclick="document.getElementById('${cardId}').classList.toggle('open'); this.textContent = document.getElementById('${cardId}').classList.contains('open') ? '▼ Less' : '▶ Full details (Buy/SL/TP, News)';">▶ Full details (Buy/SL/TP, News)</button>
             <div class="card-detail detail-section" id="${cardId}">
               <div class="detail-row"><span class="detail-label">Buy Zone</span><span class="detail-value buy">${buyZone}</span></div>
@@ -448,6 +488,16 @@
               <div class="detail-row"><span class="detail-label">Take Profit (TP)</span><span class="detail-value buy">${tp}</span></div>
               <div class="detail-row"><span class="detail-label">Support</span><span class="detail-value">${sup}</span></div>
               <div class="detail-row"><span class="detail-label">Resistance</span><span class="detail-value">${res}</span></div>
+              ${r.target_achieve_date ? `<div class="detail-row"><span class="detail-label">Target Date</span><span class="detail-value buy">~${r.target_achieve_date}</span></div>` : ''}
+              ${r.target_achieve_days != null ? `<div class="detail-row"><span class="detail-label">Est. Days</span><span class="detail-value">${r.target_achieve_days} days</span></div>` : ''}
+              ${r.stochastic_k != null ? `<div class="detail-row"><span class="detail-label">Stochastic</span><span class="detail-value">K ${r.stochastic_k} D ${r.stochastic_d || '—'}</span></div>` : ''}
+              ${r.williams_r != null ? `<div class="detail-row"><span class="detail-label">Williams %R</span><span class="detail-value">${r.williams_r}</span></div>` : ''}
+              ${r.cci != null ? `<div class="detail-row"><span class="detail-label">CCI</span><span class="detail-value">${r.cci}</span></div>` : ''}
+              ${r.adx != null ? `<div class="detail-row"><span class="detail-label">ADX</span><span class="detail-value">${r.adx}</span></div>` : ''}
+              ${r.stoch_rsi != null ? `<div class="detail-row"><span class="detail-label">Stoch RSI</span><span class="detail-value">${r.stoch_rsi}</span></div>` : ''}
+              ${r.pivot != null ? `<div class="detail-row"><span class="detail-label">Pivot / R1 / S1</span><span class="detail-value">${r.pivot} / ${r.r1 || '—'} / ${r.s1 || '—'}</span></div>` : ''}
+              ${r.news_sentiment != null ? `<div class="detail-row"><span class="detail-label">News Sentiment</span><span class="detail-value ${r.news_sentiment > 0 ? 'buy' : r.news_sentiment < 0 ? 'sell' : ''}">${r.news_sentiment > 0 ? '+' : ''}${r.news_sentiment} (impact ${r.news_impact || 0})</span></div>` : ''}
+              ${(r.pattern_signals || []).length ? `<div class="detail-row"><span class="detail-label">Chart Patterns</span><span class="detail-value">${(r.pattern_signals || []).join(', ')}</span></div>` : ''}
               <div style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-muted)">Recent News</div>
               ${newsHtml}
             </div>
@@ -459,18 +509,62 @@
     function updateTabs(items) {
       const buyC = items.filter(r => r.action === 'BUY').length;
       const sellC = items.filter(r => r.action === 'SELL').length;
-      const holdC = items.filter(r => r.action === 'HOLD').length;
       document.querySelectorAll('.tab').forEach(t => {
         const f = t.dataset.filter;
         let label = f === '' ? 'All' : f;
         if (f === 'BUY') label += ` (${buyC})`;
         if (f === 'SELL') label += ` (${sellC})`;
-        if (f === 'HOLD') label += ` (${holdC})`;
         t.textContent = label;
       });
     }
 
+    async function loadSavedLists() {
+      try {
+        const r = await fetch(`${API}/lists`);
+        const d = await r.json();
+        const buy = d.buy || [], sell = d.sell || [];
+        const total = buy.length + sell.length;
+        if (total === 0) {
+          document.getElementById('savedListsSection').style.display = 'none';
+          return;
+        }
+        document.getElementById('savedListsSection').style.display = 'block';
+        const curr = (t) => (t || '').includes('.NS') ? '₹' : '$';
+        const fmt = (v) => v != null ? (typeof v === 'number' ? v.toFixed(2) : v) : '—';
+        const row = (arr, cls) => arr.slice(0, 20).map(x => `<div class="news-item">${x.ticker} ${curr}${fmt(x.price)} ${x.score != null ? '(' + x.score + ')' : ''}</div>`).join('') || '<div class="news-item" style="color:var(--text-muted)">Empty</div>';
+        document.getElementById('savedLists').innerHTML = `
+          <div class="card"><div class="card-header"><span class="detail-value buy">BUY (${buy.length})</span></div><div class="news-list">${row(buy)}</div></div>
+          <div class="card"><div class="card-header"><span class="detail-value sell">SELL (${sell.length})</span></div><div class="news-list">${row(sell)}</div></div>
+        `;
+      } catch { document.getElementById('savedListsSection').style.display = 'none'; }
+    }
+
+    document.getElementById('clearListsBtn').addEventListener('click', async () => {
+      await fetch(`${API}/lists`, { method: 'DELETE' });
+      loadSavedLists();
+    });
+
+    document.body.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.feedback-btn');
+      if (!btn) return;
+      e.preventDefault();
+      const ticker = btn.dataset.ticker;
+      const action = btn.dataset.action;
+      const correct = btn.dataset.correct === 'true';
+      const factors = btn.dataset.factors ? btn.dataset.factors.split(',').filter(Boolean) : null;
+      try {
+        await fetch(`${API}/feedback`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ticker, action, was_correct: correct, factors_used: factors }),
+        });
+        btn.style.opacity = '1';
+        btn.disabled = true;
+      } catch (err) { console.warn(err); }
+    });
+
     document.getElementById('scanBtn').addEventListener('click', scan);
+    loadSavedLists();
     document.querySelectorAll('.tab').forEach(tab => {
       tab.addEventListener('click', () => {
         document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));

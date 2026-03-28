@@ -7,5 +7,6 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
+      # Set NEWSAPI_KEY in the Render dashboard (Environment); do not commit secrets.
       - key: NEWSAPI_KEY
-        value: 9ebdb0b06ffe49159d0a1a02e0200213
+        sync: false

@@ -23,17 +23,32 @@ SP100_ISHARES = [
     "LOW", "AMGN", "INTU", "AMAT", "SBUX", "LMT", "ADP", "GILD", "MDLZ", "CAT",
 ]
 
+# Nifty 50 - all 50 constituents (Wikipedia Dec 2025)
 NIFTY50 = [
-    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "HINDUNILVR.NS",
-    "ICICIBANK.NS", "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "KOTAKBANK.NS",
-    "LT.NS", "AXISBANK.NS", "ASIANPAINT.NS", "MARUTI.NS", "HCLTECH.NS",
-    "WIPRO.NS", "TATAMOTORS.NS", "SUNPHARMA.NS", "BAJFINANCE.NS", "NESTLEIND.NS",
-    "TITAN.NS", "ULTRACEMCO.NS", "TATASTEEL.NS", "POWERGRID.NS", "ONGC.NS",
-    "NTPC.NS", "INDUSINDBK.NS", "M&M.NS", "BAJAJFINSV.NS", "ADANIPORTS.NS",
+    "ADANIENT.NS", "ADANIPORTS.NS", "APOLLOHOSP.NS", "ASIANPAINT.NS", "AXISBANK.NS",
+    "BAJAJ-AUTO.NS", "BAJFINANCE.NS", "BAJAJFINSV.NS", "BEL.NS", "BHARTIARTL.NS",
+    "CIPLA.NS", "COALINDIA.NS", "DRREDDY.NS", "EICHERMOT.NS", "ETERNAL.NS",
+    "GRASIM.NS", "HCLTECH.NS", "HDFCBANK.NS", "HDFCLIFE.NS", "HINDALCO.NS",
+    "HINDUNILVR.NS", "ICICIBANK.NS", "INDIGO.NS", "INFY.NS", "ITC.NS",
+    "JIOFIN.NS", "JSWSTEEL.NS", "KOTAKBANK.NS", "LT.NS", "M&M.NS",
+    "MARUTI.NS", "MAXHEALTH.NS", "NESTLEIND.NS", "NTPC.NS", "ONGC.NS",
+    "POWERGRID.NS", "RELIANCE.NS", "SBILIFE.NS", "SBIN.NS", "SHRIRAMFIN.NS",
+    "SUNPHARMA.NS", "TCS.NS", "TATACONSUM.NS", "TATAMOTORS.NS", "TATASTEEL.NS",
+    "TECHM.NS", "TITAN.NS", "TRENT.NS", "ULTRACEMCO.NS", "WIPRO.NS",
+]
+NIFTY_NEXT50 = [
+    "ADANIENT.NS", "APOLLOHOSP.NS", "BEL.NS", "CIPLA.NS", "COALINDIA.NS",
+    "DRREDDY.NS", "EICHERMOT.NS", "GRASIM.NS", "HDFCLIFE.NS", "HINDALCO.NS",
+    "INDIGO.NS", "JSWSTEEL.NS", "JIOFIN.NS", "MAXHEALTH.NS", "SHRIRAMFIN.NS",
+    "SBILIFE.NS", "TATACONSUM.NS", "TECHM.NS", "TRENT.NS",
+    "DIVISLAB.NS", "DABUR.NS", "PIDILITIND.NS", "HEROMOTOCO.NS", "BAJAJ-AUTO.NS",
+    "BRITANNIA.NS", "BANKBARODA.NS", "BHEL.NS", "BPCL.NS", "IOC.NS",
+    "VEDL.NS", "MUTHOOTFIN.NS", "AUROPHARMA.NS", "TORNTPHARM.NS", "SIEMENS.NS",
+    "HAVELLS.NS", "SRF.NS", "TATAPOWER.NS", "ABB.NS", "AMBUJACEM.NS",
 ]
 
-# Default universe: US + India
-DEFAULT_TICKERS = SP100_ISHARES + NIFTY50
+# Default universe: US + India (Nifty 50 + Next 50)
+DEFAULT_TICKERS = SP100_ISHARES + NIFTY50 + NIFTY_NEXT50
 
 
 # ============================================================
@@ -93,6 +108,58 @@ def compute_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int =
     return tr.rolling(period).mean()
 
 
+def _get_extended_indicators(high, low, close, volume):
+    """Compute Stochastic, Williams %R, CCI, ADX, OBV, Stoch RSI, Pivots."""
+    from indicators import (
+        compute_stochastic,
+        compute_williams_r,
+        compute_cci,
+        compute_adx,
+        compute_obv,
+        compute_stoch_rsi,
+        compute_pivot_points,
+    )
+    out = {}
+    try:
+        sk, sd = compute_stochastic(high, low, close)
+        out["stoch_k"] = float(sk.iloc[-1]) if len(sk) and not pd.isna(sk.iloc[-1]) else None
+        out["stoch_d"] = float(sd.iloc[-1]) if len(sd) and not pd.isna(sd.iloc[-1]) else None
+    except Exception:
+        pass
+    try:
+        wr = compute_williams_r(high, low, close)
+        out["williams_r"] = float(wr.iloc[-1]) if len(wr) and not pd.isna(wr.iloc[-1]) else None
+    except Exception:
+        pass
+    try:
+        cci = compute_cci(high, low, close)
+        out["cci"] = float(cci.iloc[-1]) if len(cci) and not pd.isna(cci.iloc[-1]) else None
+    except Exception:
+        pass
+    try:
+        adx, pdi, mdi = compute_adx(high, low, close)
+        out["adx"] = float(adx.iloc[-1]) if len(adx) and not pd.isna(adx.iloc[-1]) else None
+    except Exception:
+        pass
+    try:
+        obv = compute_obv(close, volume)
+        if len(obv) >= 5:
+            obv_slope = (obv.iloc[-1] - obv.iloc[-5]) / (abs(obv.iloc[-1]) + 1e-10)
+            out["obv_trend"] = float(np.clip(obv_slope, -1, 1))
+    except Exception:
+        pass
+    try:
+        out["stoch_rsi"] = compute_stoch_rsi(close)
+    except Exception:
+        pass
+    try:
+        pivot, r1, r2, s1, s2 = compute_pivot_points(high, low, close)
+        out["pivot"], out["r1"], out["s1"] = pivot, r1, s1
+    except Exception:
+        pass
+    return out
+
+
 # ============================================================
 # COMPOSITE SIGNAL LOGIC (Multi-factor scoring)
 # ============================================================
@@ -110,15 +177,41 @@ class SignalResult:
     momentum_10d: Optional[float]
     volume_ratio: Optional[float]
     reasons: List[str]
-    # Buy/Sell levels
-    buy_zone: Optional[tuple]    # (low, high) for BUY - ideal entry
+    buy_zone: Optional[tuple]
     stop_loss: Optional[float]
     take_profit: Optional[float]
     support: Optional[float]
     resistance: Optional[float]
-    # News
     news: List[Dict]
+    news_sentiment: Optional[float] = None
+    news_impact: Optional[float] = None
+    pattern_signals: Optional[List[str]] = None
+    pattern_score: Optional[float] = None
+    factors_used: Optional[List[str]] = None  # for RLHF feedback
+    # Extended indicators
+    stochastic_k: Optional[float] = None
+    stochastic_d: Optional[float] = None
+    williams_r: Optional[float] = None
+    cci: Optional[float] = None
+    adx: Optional[float] = None
+    obv_trend: Optional[float] = None
+    stoch_rsi: Optional[float] = None
+    pivot: Optional[float] = None
+    r1: Optional[float] = None
+    s1: Optional[float] = None
+    # Target timeline
+    target_achieve_days: Optional[int] = None
+    target_achieve_date: Optional[str] = None
     error: Optional[str] = None
+
+
+def _get_rlhf_weights() -> dict:
+    """Load RLHF-adapted factor weights. Algorithm improves from feedback."""
+    try:
+        from rlhf import get_weights
+        return get_weights()
+    except Exception:
+        return {}
 
 
 def _get_bb_position(close: float, upper: float, mid: float, lower: float) -> float:
@@ -147,7 +240,8 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
                 rsi=None, macd_hist=None, bb_position=None, momentum_10d=None,
                 volume_ratio=None, reasons=["Insufficient data"],
                 buy_zone=None, stop_loss=None, take_profit=None, support=None, resistance=None,
-                news=[], error="Not enough history"
+                news=[], news_sentiment=None, news_impact=None, pattern_signals=None, pattern_score=None,
+                factors_used=None, error="Not enough history",
             )
 
         # Handle multi-index from yf
@@ -173,32 +267,62 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
         prev_close = float(close.iloc[-2]) if len(close) >= 2 else price
         change_pct = (price / prev_close - 1) * 100 if prev_close else 0
 
-        # ========== SCORING (each factor contributes -1 to 1) ==========
+        high_series = data["high"] if "high" in data.columns else close
+        low_series = data["low"] if "low" in data.columns else close
+
+        # Extended indicators: Stochastic, Williams, CCI, ADX, OBV, Stoch RSI, Pivots
+        ext = _get_extended_indicators(high_series, low_series, close, volume)
+        stoch_k = ext.get("stoch_k")
+        stoch_d = ext.get("stoch_d")
+        williams_r = ext.get("williams_r")
+        cci_val = ext.get("cci")
+        adx_val = ext.get("adx")
+        obv_trend = ext.get("obv_trend")
+        stoch_rsi_val = ext.get("stoch_rsi")
+        pivot_val = ext.get("pivot")
+        r1_val = ext.get("r1")
+        s1_val = ext.get("s1")
+
+        # Fetch news early (needed for sentiment analysis)
+        raw_news = []
+        try:
+            t = yf.Ticker(ticker)
+            raw_news = getattr(t, "news", None) or (t.get_news() if callable(getattr(t, "get_news", None)) else []) or []
+        except Exception:
+            pass
+
+        # ========== SCORING (RLHF-adaptive weights) ==========
+        weights = _get_rlhf_weights()
         score = 0.0
         n_factors = 0
+        factors_used = []
 
         # RSI: <30 bullish (+), >70 bearish (-)
         if not pd.isna(rsi):
-            n_factors += 1
+            w = weights.get("rsi", 1.0)
             if rsi < 30:
-                score += 0.8
+                score += 0.8 * w
+                factors_used.append("rsi")
                 reasons.append(f"RSI oversold ({rsi:.0f})")
             elif rsi < 40:
-                score += 0.3
+                score += 0.3 * w
+                factors_used.append("rsi")
                 reasons.append(f"RSI low ({rsi:.0f})")
             elif rsi > 70:
-                score -= 0.8
+                score -= 0.8 * w
+                factors_used.append("rsi")
                 reasons.append(f"RSI overbought ({rsi:.0f})")
             elif rsi > 60:
-                score -= 0.3
+                score -= 0.3 * w
+                factors_used.append("rsi")
                 reasons.append(f"RSI high ({rsi:.0f})")
 
         # MACD histogram: positive = bullish, negative = bearish
         if not pd.isna(macd_hist) and macd_hist != 0:
-            n_factors += 1
-            # Normalize by price (roughly)
+            w = weights.get("macd", 1.0)
+            factors_used.append("macd")
             macd_norm = np.clip(macd_hist / (price * 0.01), -1, 1)
-            score += macd_norm * 0.5
+            score += macd_norm * 0.5 * w
             if macd_hist > 0:
                 reasons.append("MACD bullish")
             else:
@@ -206,8 +330,9 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
 
         # Bollinger position: below lower = buy, above upper = sell
         if not np.isnan(bb_pos):
-            n_factors += 1
-            score -= bb_pos * 0.6
+            w = weights.get("bollinger", 1.0)
+            factors_used.append("bollinger")
+            score -= bb_pos * 0.6 * w
             if bb_pos < -0.5:
                 reasons.append("Price near lower Bollinger")
             elif bb_pos > 0.5:
@@ -215,41 +340,169 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
 
         # SMA crossover: short > long = bullish
         if len(close) >= 51:
-            n_factors += 1
+            w = weights.get("sma", 1.0)
+            factors_used.append("sma")
             s10, s50 = sma_10.iloc[-1], sma_50.iloc[-1]
             if s10 > s50:
-                score += 0.4
+                score += 0.4 * w
                 reasons.append("SMA 10 > SMA 50")
             else:
-                score -= 0.4
+                score -= 0.4 * w
                 reasons.append("SMA 10 < SMA 50")
 
         # Momentum (10d): positive = bullish
         if not pd.isna(mom):
-            n_factors += 1
+            w = weights.get("momentum", 1.0)
+            factors_used.append("momentum")
             mom_norm = np.clip(mom / 15, -1, 1)
-            score += mom_norm * 0.3
+            score += mom_norm * 0.3 * w
             if abs(mom) > 5:
                 reasons.append(f"10d momentum {mom:+.1f}%")
 
         # Volume confirmation: high vol on up move = stronger signal
-        if not pd.isna(vol_ratio) and vol_ratio > 1.2 and change_pct > 0:
-            score += 0.2
-            reasons.append("Volume confirmation")
-        elif not pd.isna(vol_ratio) and vol_ratio > 1.2 and change_pct < 0:
-            score -= 0.2
-            reasons.append("High volume on decline")
+        if not pd.isna(vol_ratio) and vol_ratio > 1.2:
+            w = weights.get("volume", 1.0)
+            factors_used.append("volume")
+            if change_pct > 0:
+                score += 0.2 * w
+                reasons.append("Volume confirmation")
+            else:
+                score -= 0.2 * w
+                reasons.append("High volume on decline")
 
-        # Normalize score to [-1, 1]
+        # Stochastic: <20 oversold (bullish), >80 overbought (bearish)
+        if stoch_k is not None:
+            w = weights.get("stochastic", 1.0)
+            factors_used.append("stochastic")
+            if stoch_k < 20:
+                score += 0.4 * w
+                reasons.append(f"Stochastic oversold ({stoch_k:.0f})")
+            elif stoch_k > 80:
+                score -= 0.4 * w
+                reasons.append(f"Stochastic overbought ({stoch_k:.0f})")
+
+        # Williams %R: < -80 oversold, > -20 overbought
+        if williams_r is not None:
+            w = weights.get("williams", 1.0)
+            factors_used.append("williams_r")
+            if williams_r < -80:
+                score += 0.35 * w
+                reasons.append(f"Williams %R oversold ({williams_r:.0f})")
+            elif williams_r > -20:
+                score -= 0.35 * w
+                reasons.append(f"Williams %R overbought ({williams_r:.0f})")
+
+        # CCI: < -100 oversold, > 100 overbought
+        if cci_val is not None:
+            w = weights.get("cci", 1.0)
+            factors_used.append("cci")
+            if cci_val < -100:
+                score += 0.3 * w
+                reasons.append(f"CCI oversold ({cci_val:.0f})")
+            elif cci_val > 100:
+                score -= 0.3 * w
+                reasons.append(f"CCI overbought ({cci_val:.0f})")
+
+        # ADX: strong trend (>25) confirms direction; +DI > -DI bullish
+        if adx_val is not None and adx_val > 20:
+            try:
+                from indicators import compute_adx
+                _, pdi, mdi = compute_adx(high_series, low_series, close, 14)
+                pdi_val = float(pdi.iloc[-1]) if len(pdi) else None
+                mdi_val = float(mdi.iloc[-1]) if len(mdi) else None
+                if pdi_val is not None and mdi_val is not None:
+                    w = weights.get("adx", 1.0)
+                    factors_used.append("adx")
+                    if pdi_val > mdi_val:
+                        score += 0.25 * w
+                        reasons.append(f"ADX trend bullish ({adx_val:.0f})")
+                    else:
+                        score -= 0.25 * w
+                        reasons.append(f"ADX trend bearish ({adx_val:.0f})")
+            except Exception:
+                pass
+
+        # OBV trend: positive slope = bullish
+        if obv_trend is not None and obv_trend != 0:
+            w = weights.get("obv", 1.0)
+            factors_used.append("obv")
+            score += obv_trend * 0.2 * w
+            if obv_trend > 0.3:
+                reasons.append("OBV rising")
+            elif obv_trend < -0.3:
+                reasons.append("OBV falling")
+
+        # Stoch RSI: <20 oversold, >80 overbought
+        if stoch_rsi_val is not None:
+            w = weights.get("stoch_rsi", 1.0)
+            factors_used.append("stoch_rsi")
+            if stoch_rsi_val < 20:
+                score += 0.35 * w
+                reasons.append(f"Stoch RSI oversold ({stoch_rsi_val:.0f})")
+            elif stoch_rsi_val > 80:
+                score -= 0.35 * w
+                reasons.append(f"Stoch RSI overbought ({stoch_rsi_val:.0f})")
+
+        # Pattern analysis - check all patterns before deciding
+        pattern_signals_list = []
+        pattern_score_val = 0.0
+        news_sentiment_val = 0.0
+        news_impact_val = 0.0
+        try:
+            from patterns import detect_all_patterns
+            high_series = data["high"] if "high" in data.columns else close
+            low_series = data["low"] if "low" in data.columns else close
+            support_pre = float(close.rolling(20).min().iloc[-1]) if len(close) >= 20 else price * 0.97
+            resistance_pre = float(close.rolling(20).max().iloc[-1]) if len(close) >= 20 else price * 1.03
+            pat_sigs, pattern_score_val = detect_all_patterns(
+                data, close, support_pre, resistance_pre
+            )
+            pattern_signals_list = [f"{s.name}({s.direction})" for s in pat_sigs]
+            if pat_sigs:
+                w = weights.get("pattern", 1.0)
+                factors_used.append("pattern")
+                score += pattern_score_val * 0.5 * w
+                for s in pat_sigs:
+                    if s.direction != 0:
+                        reasons.append(f"Pattern: {s.name} (bearish)" if s.direction < 0 else f"Pattern: {s.name} (bullish)")
+        except Exception:
+            pass
+
+        # News sentiment - analyze impact on decision
+        try:
+            from news_analysis import analyze_news_sentiment
+            news_list_for_analysis = []
+            for n in (raw_news or []):
+                news_list_for_analysis.append({
+                    "title": n.get("title") or n.get("link") or "",
+                    "description": n.get("description", ""),
+                    "content": n.get("content", ""),
+                })
+            news_result = analyze_news_sentiment(news_list_for_analysis)
+            news_sentiment_val = news_result["sentiment_score"]
+            news_impact_val = news_result["impact"]
+            if news_impact_val > 0.2 and abs(news_sentiment_val) > 0.2:
+                w = weights.get("news", 1.0)
+                factors_used.append("news")
+                score += news_sentiment_val * news_impact_val * 0.6 * w
+                reasons.append(news_result["summary"])
+        except Exception:
+            pass
+
+        n_factors = len(factors_used) if factors_used else 1
+        # Normalize score to [-1, 1] - balanced so BUY/SELL require clear majority
         if n_factors > 0:
-            score = np.clip(score / max(n_factors * 0.5, 1), -1, 1)
+            score = np.clip(score / max(n_factors * 0.45, 1), -1, 1)
         else:
             score = 0
 
-        # Convert to action
-        if score >= 0.4:
+        # BUY/SELL/HOLD: require clear signal (threshold 0.35)
+        # BUY = bullish factors dominate (RSI oversold, MACD up, price at support, etc.)
+        # SELL = bearish factors dominate (RSI overbought, MACD down, resistance, etc.)
+        # HOLD = mixed or weak signals
+        if score >= 0.35:
             action = "BUY"
-        elif score <= -0.4:
+        elif score <= -0.35:
             action = "SELL"
         else:
             action = "HOLD"
@@ -261,8 +514,6 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
         resistance = high_20
 
         # ATR for stop placement
-        high_series = data["high"] if "high" in data.columns else close
-        low_series = data["low"] if "low" in data.columns else close
         atr = compute_atr(high_series, low_series, close, 14).iloc[-1] if len(close) >= 15 else price * 0.02
         atr = float(atr) if not (pd.isna(atr) or atr <= 0) else price * 0.02
 
@@ -280,21 +531,32 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
             stop_loss = support - atr
             take_profit = resistance + atr
 
-        # Fetch news
-        news_list = []
+        # Target timeline: estimate days to reach TP (or SL for SELL)
+        target_price = take_profit if action == "BUY" else stop_loss
+        atr_pct = (atr / price) * 100
+        daily_return_pct = abs(change_pct) if change_pct != 0 else atr_pct
         try:
-            t = yf.Ticker(ticker)
-            raw = getattr(t, "news", None)
-            if raw is None and callable(getattr(t, "get_news", None)):
-                raw = t.get_news()
-            for n in (raw or [])[:8]:
-                news_list.append({
-                    "title": (n.get("title") or n.get("link") or "")[:120],
-                    "url": n.get("link") or n.get("url") or "",
-                    "publisher": n.get("publisher") or n.get("source") or "",
-                })
+            from indicators import compute_target_days
+            target_days = compute_target_days(price, target_price, daily_return_pct, atr_pct)
         except Exception:
-            pass
+            target_days = max(5, min(30, int(20 * atr_pct)))
+        from datetime import datetime, timedelta
+        target_date = (datetime.now() + timedelta(days=target_days)).strftime("%Y-%m-%d")
+
+        # Build news list from raw_news - ensure absolute URLs for external links
+        YF_BASE = "https://finance.yahoo.com"
+        news_list = []
+        for n in (raw_news or [])[:8]:
+            raw_url = n.get("link") or n.get("url") or ""
+            url = raw_url.strip()
+            if url and not url.startswith(("http://", "https://")):
+                url = url if url.startswith("/") else "/" + url
+                url = YF_BASE + url
+            news_list.append({
+                "title": (n.get("title") or n.get("link") or "")[:120],
+                "url": url,
+                "publisher": n.get("publisher") or n.get("source") or "",
+            })
 
         return SignalResult(
             ticker=ticker,
@@ -314,6 +576,23 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
             support=support,
             resistance=resistance,
             news=news_list,
+            news_sentiment=news_sentiment_val,
+            news_impact=news_impact_val,
+            pattern_signals=pattern_signals_list if pattern_signals_list else None,
+            pattern_score=round(pattern_score_val, 3) if pattern_score_val != 0 else None,
+            factors_used=factors_used if factors_used else None,
+            stochastic_k=stoch_k,
+            stochastic_d=stoch_d,
+            williams_r=williams_r,
+            cci=cci_val,
+            adx=adx_val,
+            obv_trend=obv_trend,
+            stoch_rsi=stoch_rsi_val,
+            pivot=pivot_val,
+            r1=r1_val,
+            s1=s1_val,
+            target_achieve_days=target_days,
+            target_achieve_date=target_date,
         )
 
     except Exception as e:
@@ -322,7 +601,8 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
             rsi=None, macd_hist=None, bb_position=None, momentum_10d=None,
             volume_ratio=None, reasons=[],
             buy_zone=None, stop_loss=None, take_profit=None, support=None, resistance=None,
-            news=[], error=str(e)
+            news=[], news_sentiment=None, news_impact=None, pattern_signals=None, pattern_score=None,
+            factors_used=None, error=str(e)
         )
 
 
@@ -343,6 +623,7 @@ def scan_tickers(
         d = {
             "ticker": r.ticker,
             "action": r.action,
+            "factors_used": r.factors_used,
             "score": round(r.score, 3),
             "price": r.price,
             "change_pct": round(r.change_pct, 2),
@@ -358,6 +639,22 @@ def scan_tickers(
             "support": round(r.support, 2) if r.support is not None else None,
             "resistance": round(r.resistance, 2) if r.resistance is not None else None,
             "news": r.news,
+            "news_sentiment": round(r.news_sentiment, 3) if r.news_sentiment is not None else None,
+            "news_impact": round(r.news_impact, 2) if r.news_impact is not None else None,
+            "pattern_signals": r.pattern_signals,
+            "pattern_score": r.pattern_score,
+            "stochastic_k": round(r.stochastic_k, 1) if r.stochastic_k is not None else None,
+            "stochastic_d": round(r.stochastic_d, 1) if r.stochastic_d is not None else None,
+            "williams_r": round(r.williams_r, 1) if r.williams_r is not None else None,
+            "cci": round(r.cci, 1) if r.cci is not None else None,
+            "adx": round(r.adx, 1) if r.adx is not None else None,
+            "obv_trend": round(r.obv_trend, 2) if r.obv_trend is not None else None,
+            "stoch_rsi": round(r.stoch_rsi, 1) if r.stoch_rsi is not None else None,
+            "pivot": round(r.pivot, 2) if r.pivot is not None else None,
+            "r1": round(r.r1, 2) if r.r1 is not None else None,
+            "s1": round(r.s1, 2) if r.s1 is not None else None,
+            "target_achieve_days": r.target_achieve_days,
+            "target_achieve_date": r.target_achieve_date,
             "error": r.error,
         }
         if filter_action and r.action != filter_action:

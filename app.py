@@ -6,7 +6,9 @@ from pydantic import BaseModel
 from typing import Optional, List
 
 from scanner import scan_tickers
-from ticker_data import search_tickers, get_ticker_count
+from ticker_data import search_tickers, get_ticker_count, get_nifty50_tickers, load_all_tickers
+from signals_store import add_to_lists, get_lists, clear_lists
+from rlhf import record_feedback, get_stats, reset_weights
 
 # Run with: python app.py (uses uvicorn under the hood)
 # Or manually: uvicorn app:app --reload --host 0.0.0.0 --port 8000
@@ -45,6 +47,8 @@ class ScanRequest(BaseModel):
     tickers: Optional[List[str]] = None
     period: str = "3mo"
     filter_action: Optional[str] = None
+    universe: Optional[str] = None  # "nifty50" | "all" = scan all in DB
+    save_to_lists: bool = False  # add results to predefined BUY/SELL/HOLD lists
 
 
 @app.get("/")
@@ -65,14 +69,73 @@ def ticker_count_endpoint():
     return {"count": get_ticker_count()}
 
 
+@app.get("/tickers/nifty50")
+def nifty50_endpoint():
+    """Return all Nifty 50 tickers for scan."""
+    return {"tickers": get_nifty50_tickers(), "count": 50}
+
+
+@app.get("/lists")
+def lists_endpoint():
+    """Return predefined BUY / SELL / HOLD lists from stored scan results."""
+    return get_lists()
+
+
+@app.delete("/lists")
+def clear_lists_endpoint():
+    """Clear stored BUY/SELL/HOLD lists."""
+    clear_lists()
+    return {"status": "cleared"}
+
+
+class FeedbackRequest(BaseModel):
+    ticker: str
+    action: str  # BUY | SELL | HOLD
+    was_correct: bool
+    factors_used: Optional[List[str]] = None
+
+
+@app.post("/feedback")
+def feedback_endpoint(req: FeedbackRequest):
+    """RLHF: Record if prediction was correct. Algo improves from feedback."""
+    record_feedback(
+        ticker=req.ticker,
+        action=req.action.upper(),
+        was_correct=req.was_correct,
+        factors_present=req.factors_used,
+    )
+    return get_stats()
+
+
+@app.get("/feedback/stats")
+def feedback_stats_endpoint():
+    """Return RLHF stats: feedback count, accuracy, learned weights."""
+    return get_stats()
+
+
+@app.post("/feedback/reset")
+def feedback_reset_endpoint():
+    """Reset RLHF weights to defaults."""
+    return {"weights": reset_weights()}
+
+
 @app.post("/scan")
 def scan_endpoint(req: ScanRequest):
     try:
+        tickers = req.tickers
+        if not tickers:
+            if req.universe == "nifty50":
+                tickers = [t["symbol"] for t in get_nifty50_tickers()]
+            elif req.universe == "all":
+                df = load_all_tickers()
+                tickers = df["symbol"].astype(str).tolist()
         results = scan_tickers(
-            tickers=req.tickers,
+            tickers=tickers,
             period=req.period,
             filter_action=req.filter_action,
         )
+        if req.save_to_lists and results:
+            add_to_lists(results)
         return {"results": results, "count": len(results)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

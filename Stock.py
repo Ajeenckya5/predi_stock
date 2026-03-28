@@ -41,6 +41,9 @@ NOTE: This is research/educational code, NOT financial advice.
 
 import os
 import time
+
+from dotenv import load_dotenv
+
 import math
 import json
 import argparse
@@ -58,6 +61,7 @@ from sklearn.model_selection import train_test_split
 
 from transformers import AutoTokenizer, AutoModel
 
+load_dotenv()
 
 # ============================================================
 # CONFIG
@@ -69,7 +73,7 @@ GLOBAL_NEWS_QUERY = (
     "OR RBI OR 'Reserve Bank of India' OR 'Nifty 50' OR Sensex OR India"
 )
 
-NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "YOUR_NEWSAPI_KEY")  # set real key in env
+NEWSAPI_KEY = (os.getenv("NEWSAPI_KEY") or "").strip()
 
 RESAMPLE_INTERVAL = "10min"  # 10-minute bars
 SEQ_LEN = 48               # sequence length
@@ -94,7 +98,7 @@ def newsapi_get_everything(q, from_dt, to_dt, language="en"):
     """
     Simple wrapper for NewsAPI 'everything' endpoint.
     """
-    if NEWSAPI_KEY == "YOUR_NEWSAPI_KEY":
+    if not NEWSAPI_KEY or NEWSAPI_KEY == "YOUR_NEWSAPI_KEY":
         print("[WARN] NEWSAPI_KEY not set, returning empty news list.")
         return []
 
