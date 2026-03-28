@@ -642,7 +642,7 @@
       }
       wrap.innerHTML = '<div style="padding:1rem;color:var(--text-muted)">Loading chart…</div>';
       try {
-        const res = await fetch(`${API}/chart/${encodeURIComponent(ticker)}?period=6mo`);
+        const res = await fetch(`${API}/chart/${encodeURIComponent(ticker)}?period=1y&fwd_days=5`);
         const p = await res.json();
         if (!res.ok) throw new Error(p.detail || p.error || 'Chart request failed');
         wrap.innerHTML = '';
@@ -682,7 +682,22 @@
             const dir = s.direction > 0 ? 'bull' : s.direction < 0 ? 'bear' : 'neu';
             return `<span class="pattern-pill ${cls}" title="${dir}">${String(s.name).replace(/_/g, ' ')} · str ${s.strength}</span>`;
           }).join(' ');
-          legend.innerHTML = `<div><strong>Pattern score:</strong> ${p.composite_pattern_score != null ? Number(p.composite_pattern_score).toFixed(3) : '—'} &nbsp;|&nbsp; Lines: support (green), resistance (red). Markers: SH swing high, SL swing low.</div><div style="margin-top:0.35rem">${pills || '<span class="pattern-pill">No named patterns</span>'}</div>`;
+          const hp = p.historical_prediction;
+          let histBlock = '';
+          if (hp && !hp.error) {
+            const col = hp.direction === 'bullish' ? 'var(--buy)' : hp.direction === 'bearish' ? 'var(--sell)' : 'var(--text-muted)';
+            const exp = hp.expected_fwd_return_pct != null ? `${Number(hp.expected_fwd_return_pct).toFixed(2)}%` : '—';
+            const conf = hp.confidence != null ? `${(Number(hp.confidence) * 100).toFixed(0)}%` : '—';
+            histBlock = `<div style="margin-top:0.6rem;padding:0.6rem;background:#0f172a;border-radius:8px;border:1px solid var(--border);">
+              <div style="font-size:0.8rem;"><strong>History → next ${hp.forward_horizon_bars || 5} bars:</strong>
+              <span style="color:${col};font-weight:600;"> ${String(hp.direction || 'neutral').toUpperCase()}</span>
+              · blended exp. move <strong>${exp}</strong> · confidence ${conf}</div>
+              <div style="font-size:0.72rem;margin-top:0.35rem;color:var(--text-muted);line-height:1.45;">${(hp.summary || '').replace(/</g, '&lt;')}</div>
+            </div>`;
+          } else if (hp && hp.error) {
+            histBlock = `<div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.5rem;">${String(hp.error)}</div>`;
+          }
+          legend.innerHTML = `<div><strong>Pattern score:</strong> ${p.composite_pattern_score != null ? Number(p.composite_pattern_score).toFixed(3) : '—'} &nbsp;|&nbsp; Chart: support (green), resistance (red). Markers: SH = swing high, SL = swing low.</div><div style="margin-top:0.35rem">${pills || '<span class="pattern-pill">No named patterns</span>'}</div>${histBlock}`;
         }
       } catch (err) {
         wrap.innerHTML = `<div class="error-msg" style="padding:1rem">${err.message}</div>`;

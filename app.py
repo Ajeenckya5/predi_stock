@@ -85,11 +85,19 @@ def indicators_catalog_endpoint():
 
 
 @app.get("/chart/{ticker}")
-def chart_live_endpoint(ticker: str, period: str = "6mo", interval: str = "1d"):
+def chart_live_endpoint(
+    ticker: str,
+    period: str = "1y",
+    interval: str = "1d",
+    fwd_days: int = 5,
+):
     """
-    OHLCV candles + pattern markers & S/R lines for the live chart UI.
+    OHLCV candles + pattern markers & S/R lines + historical forward-edge prediction.
+    Use a longer ``period`` (e.g. 1y–2y) so past-regime statistics are meaningful.
     """
-    payload = build_chart_payload(ticker, period=period, interval=interval)
+    payload = build_chart_payload(
+        ticker, period=period, interval=interval, fwd_days=max(1, min(fwd_days, 20))
+    )
     err = payload.get("error")
     if err:
         raise HTTPException(status_code=400, detail=str(err))

@@ -11,6 +11,7 @@ import pandas as pd
 import yfinance as yf
 
 from patterns import detect_all_patterns
+from historical_predict import compute_historical_prediction
 
 
 def _normalize_ohlc(df: pd.DataFrame) -> pd.DataFrame:
@@ -45,6 +46,7 @@ def build_chart_payload(
     ticker: str,
     period: str = "6mo",
     interval: str = "1d",
+    fwd_days: int = 5,
 ) -> Dict[str, Any]:
     """
     Fetch OHLCV and return JSON for Lightweight Charts + pattern analysis.
@@ -132,6 +134,13 @@ def build_chart_payload(
         for s in merged
     ]
 
+    try:
+        historical_prediction = compute_historical_prediction(
+            data, close, high, low, support, resistance, fwd_days=fwd_days
+        )
+    except Exception as exc:
+        historical_prediction = {"error": str(exc), "summary": "Historical model unavailable."}
+
     return {
         "ticker": t,
         "period": period,
@@ -143,6 +152,7 @@ def build_chart_payload(
         "resistance": resistance,
         "pattern_signals": pattern_payload,
         "composite_pattern_score": composite,
+        "historical_prediction": historical_prediction,
         "last_close": float(close.iloc[-1]),
         "bar_count": len(candles),
     }
