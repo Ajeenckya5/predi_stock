@@ -195,6 +195,69 @@ class SignalResult:
     target_achieve_days: Optional[int] = None
     target_achieve_date: Optional[str] = None
     error: Optional[str] = None
+    # Which indicators were used for scoring (None = all). Same order as request after normalize.
+    indicators_for_score: Optional[List[str]] = None
+
+
+# Indicators that participate in the composite score (manual selection applies to these).
+ALL_SCORING_INDICATORS = frozenset({
+    "rsi", "macd", "bollinger", "sma", "momentum", "volume",
+    "stochastic", "williams_r", "cci", "adx", "obv", "stoch_rsi",
+    "pattern", "news",
+})
+
+INDICATOR_ALIASES = {
+    "williams": "williams_r",
+    "williams_percent_r": "williams_r",
+    "stoch": "stochastic",
+    "bb": "bollinger",
+    "vol": "volume",
+    "mom": "momentum",
+}
+
+# API / UI catalog (id, human label)
+INDICATOR_CATALOG: List[Dict[str, str]] = [
+    {"id": "rsi", "label": "RSI"},
+    {"id": "macd", "label": "MACD"},
+    {"id": "bollinger", "label": "Bollinger Bands"},
+    {"id": "sma", "label": "SMA crossover (10/50)"},
+    {"id": "momentum", "label": "10d momentum"},
+    {"id": "volume", "label": "Volume vs avg"},
+    {"id": "stochastic", "label": "Stochastic"},
+    {"id": "williams_r", "label": "Williams %R"},
+    {"id": "cci", "label": "CCI"},
+    {"id": "adx", "label": "ADX + DI"},
+    {"id": "obv", "label": "OBV trend"},
+    {"id": "stoch_rsi", "label": "Stochastic RSI"},
+    {"id": "pattern", "label": "Chart patterns"},
+    {"id": "news", "label": "News sentiment"},
+]
+
+
+def normalize_indicator_set(indicators: Optional[List[str]]) -> Optional[frozenset]:
+    """
+    None / empty / all-invalid → None (use full model).
+    Otherwise return frozenset of canonical ids.
+    """
+    if not indicators:
+        return None
+    out = set()
+    for x in indicators:
+        k = str(x).strip().lower().replace(" ", "_").replace("-", "_")
+        k = INDICATOR_ALIASES.get(k, k)
+        if k in ALL_SCORING_INDICATORS:
+            out.add(k)
+    return frozenset(out) if out else None
+
+
+def scoring_active(key: str, enabled: Optional[frozenset]) -> bool:
+    return enabled is None or key in enabled
+
+
+def _indicators_applied_list(enabled: Optional[frozenset]) -> List[str]:
+    if enabled is None:
+        return sorted(ALL_SCORING_INDICATORS)
+    return sorted(enabled)
 
 
 def _get_rlhf_weights() -> dict:
@@ -227,11 +290,16 @@ def _binary_action(score: float) -> str:
     return "BUY" if score >= 0 else "SELL"
 
 
-def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
+def analyze_ticker(
+    ticker: str,
+    period: str = "3mo",
+    indicators: Optional[List[str]] = None,
+) -> SignalResult:
     """
     Compute technical indicators and produce a composite BUY or SELL signal.
-    Uses RSI, MACD, Bollinger Bands, SMA crossover, momentum, volume.
+    ``indicators``: if set, only those factors contribute to the score (manual mode).
     """
+    applied_labels = _indicators_applied_list(normalize_indicator_set(indicators))
     reasons = []
     try:
         data = yf.download(ticker, period=period, progress=False, auto_adjust=True)
@@ -243,6 +311,7 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
                 buy_zone=None, stop_loss=None, take_profit=None, support=None, resistance=None,
                 news=[], news_sentiment=None, news_impact=None, pattern_signals=None, pattern_score=None,
                 factors_used=None, error="Not enough history",
+                indicators_for_score=applied_labels,
             )
 
         # Handle multi-index from yf
@@ -292,6 +361,7 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
         except Exception:
             pass
 
+        enabled = normalize_indicator_set(indicators)
         # ========== SCORING (RLHF-adaptive weights) ==========
         weights = _get_rlhf_weights()
         score = 0.0
@@ -299,7 +369,7 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
         factors_used = []
 
         # RSI: <30 bullish (+), >70 bearish (-)
-        if not pd.isna(rsi):
+        if scoring_active("rsi", enabled) and not pd.isna(rsi):
             w = weights.get("rsi", 1.0)
             if rsi < 30:
                 score += 0.8 * w
@@ -319,7 +389,7 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
                 reasons.append(f"RSI high ({rsi:.0f})")
 
         # MACD histogram: positive = bullish, negative = bearish
-        if not pd.isna(macd_hist) and macd_hist != 0:
+        if scoring_active("macd", enabled) and not pd.isna(macd_hist) and macd_hist != 0:
             w = weights.get("macd", 1.0)
             factors_used.append("macd")
             macd_norm = np.clip(macd_hist / (price * 0.01), -1, 1)
@@ -330,7 +400,7 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
                 reasons.append("MACD bearish")
 
         # Bollinger position: below lower = buy, above upper = sell
-        if not np.isnan(bb_pos):
+        if scoring_active("bollinger", enabled) and not np.isnan(bb_pos):
             w = weights.get("bollinger", 1.0)
             factors_used.append("bollinger")
             score -= bb_pos * 0.6 * w
@@ -340,7 +410,7 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
                 reasons.append("Price near upper Bollinger")
 
         # SMA crossover: short > long = bullish
-        if len(close) >= 51:
+        if scoring_active("sma", enabled) and len(close) >= 51:
             w = weights.get("sma", 1.0)
             factors_used.append("sma")
             s10, s50 = sma_10.iloc[-1], sma_50.iloc[-1]
@@ -352,7 +422,7 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
                 reasons.append("SMA 10 < SMA 50")
 
         # Momentum (10d): positive = bullish
-        if not pd.isna(mom):
+        if scoring_active("momentum", enabled) and not pd.isna(mom):
             w = weights.get("momentum", 1.0)
             factors_used.append("momentum")
             mom_norm = np.clip(mom / 15, -1, 1)
@@ -361,7 +431,7 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
                 reasons.append(f"10d momentum {mom:+.1f}%")
 
         # Volume confirmation: high vol on up move = stronger signal
-        if not pd.isna(vol_ratio) and vol_ratio > 1.2:
+        if scoring_active("volume", enabled) and not pd.isna(vol_ratio) and vol_ratio > 1.2:
             w = weights.get("volume", 1.0)
             factors_used.append("volume")
             if change_pct > 0:
@@ -372,7 +442,7 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
                 reasons.append("High volume on decline")
 
         # Stochastic: <20 oversold (bullish), >80 overbought (bearish)
-        if stoch_k is not None:
+        if scoring_active("stochastic", enabled) and stoch_k is not None:
             w = weights.get("stochastic", 1.0)
             factors_used.append("stochastic")
             if stoch_k < 20:
@@ -383,7 +453,7 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
                 reasons.append(f"Stochastic overbought ({stoch_k:.0f})")
 
         # Williams %R: < -80 oversold, > -20 overbought
-        if williams_r is not None:
+        if scoring_active("williams_r", enabled) and williams_r is not None:
             w = weights.get("williams", 1.0)
             factors_used.append("williams_r")
             if williams_r < -80:
@@ -394,7 +464,7 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
                 reasons.append(f"Williams %R overbought ({williams_r:.0f})")
 
         # CCI: < -100 oversold, > 100 overbought
-        if cci_val is not None:
+        if scoring_active("cci", enabled) and cci_val is not None:
             w = weights.get("cci", 1.0)
             factors_used.append("cci")
             if cci_val < -100:
@@ -405,7 +475,7 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
                 reasons.append(f"CCI overbought ({cci_val:.0f})")
 
         # ADX: strong trend (>25) confirms direction; +DI > -DI bullish
-        if adx_val is not None and adx_val > 20:
+        if scoring_active("adx", enabled) and adx_val is not None and adx_val > 20:
             try:
                 from indicators import compute_adx
                 _, pdi, mdi = compute_adx(high_series, low_series, close, 14)
@@ -424,7 +494,7 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
                 pass
 
         # OBV trend: positive slope = bullish
-        if obv_trend is not None and obv_trend != 0:
+        if scoring_active("obv", enabled) and obv_trend is not None and obv_trend != 0:
             w = weights.get("obv", 1.0)
             factors_used.append("obv")
             score += obv_trend * 0.2 * w
@@ -434,7 +504,7 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
                 reasons.append("OBV falling")
 
         # Stoch RSI: <20 oversold, >80 overbought
-        if stoch_rsi_val is not None:
+        if scoring_active("stoch_rsi", enabled) and stoch_rsi_val is not None:
             w = weights.get("stoch_rsi", 1.0)
             factors_used.append("stoch_rsi")
             if stoch_rsi_val < 20:
@@ -444,22 +514,22 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
                 score -= 0.35 * w
                 reasons.append(f"Stoch RSI overbought ({stoch_rsi_val:.0f})")
 
-        # Pattern analysis - check all patterns before deciding
+        # Pattern analysis (always detect for display; score only if enabled)
         pattern_signals_list = []
         pattern_score_val = 0.0
         news_sentiment_val = 0.0
         news_impact_val = 0.0
         try:
             from patterns import detect_all_patterns
-            high_series = data["high"] if "high" in data.columns else close
-            low_series = data["low"] if "low" in data.columns else close
+            ph = data["high"] if "high" in data.columns else close
+            pl = data["low"] if "low" in data.columns else close
             support_pre = float(close.rolling(20).min().iloc[-1]) if len(close) >= 20 else price * 0.97
             resistance_pre = float(close.rolling(20).max().iloc[-1]) if len(close) >= 20 else price * 1.03
             pat_sigs, pattern_score_val = detect_all_patterns(
                 data, close, support_pre, resistance_pre
             )
             pattern_signals_list = [f"{s.name}({s.direction})" for s in pat_sigs]
-            if pat_sigs:
+            if scoring_active("pattern", enabled) and pat_sigs:
                 w = weights.get("pattern", 1.0)
                 factors_used.append("pattern")
                 score += pattern_score_val * 0.5 * w
@@ -469,7 +539,7 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
         except Exception:
             pass
 
-        # News sentiment - analyze impact on decision
+        # News sentiment (always compute for display; score only if enabled)
         try:
             from news_analysis import analyze_news_sentiment
             news_list_for_analysis = []
@@ -482,7 +552,7 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
             news_result = analyze_news_sentiment(news_list_for_analysis)
             news_sentiment_val = news_result["sentiment_score"]
             news_impact_val = news_result["impact"]
-            if news_impact_val > 0.2 and abs(news_sentiment_val) > 0.2:
+            if scoring_active("news", enabled) and news_impact_val > 0.2 and abs(news_sentiment_val) > 0.2:
                 w = weights.get("news", 1.0)
                 factors_used.append("news")
                 score += news_sentiment_val * news_impact_val * 0.6 * w
@@ -582,6 +652,7 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
             s1=s1_val,
             target_achieve_days=target_days,
             target_achieve_date=target_date,
+            indicators_for_score=_indicators_applied_list(enabled),
         )
 
     except Exception as e:
@@ -591,7 +662,8 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
             volume_ratio=None, reasons=[f"Error: {str(e)}"],
             buy_zone=None, stop_loss=None, take_profit=None, support=None, resistance=None,
             news=[], news_sentiment=None, news_impact=None, pattern_signals=None, pattern_score=None,
-            factors_used=None, error=str(e)
+            factors_used=None, error=str(e),
+            indicators_for_score=applied_labels,
         )
 
 
@@ -599,15 +671,17 @@ def scan_tickers(
     tickers: Optional[List[str]] = None,
     period: str = "3mo",
     filter_action: Optional[str] = None,
+    indicators: Optional[List[str]] = None,
 ) -> List[Dict]:
     """
     Scan a list of tickers and return signal results.
     filter_action: "BUY" | "SELL" | None (return all)
+    indicators: optional subset of factor ids for scoring (manual mode); None = all.
     """
     tickers = tickers or DEFAULT_TICKERS
     results = []
     for t in tickers:
-        r = analyze_ticker(t, period=period)
+        r = analyze_ticker(t, period=period, indicators=indicators)
         buy_zone_ser = [round(r.buy_zone[0], 2), round(r.buy_zone[1], 2)] if r.buy_zone else None
         d = {
             "ticker": r.ticker,
@@ -645,6 +719,7 @@ def scan_tickers(
             "target_achieve_days": r.target_achieve_days,
             "target_achieve_date": r.target_achieve_date,
             "error": r.error,
+            "indicators_for_score": r.indicators_for_score,
         }
         if filter_action and r.action != filter_action:
             continue

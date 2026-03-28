@@ -5,7 +5,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional, List
 
-from scanner import scan_tickers
+from scanner import scan_tickers, INDICATOR_CATALOG
 from ticker_data import search_tickers, get_ticker_count, get_nifty50_tickers, load_all_tickers
 from signals_store import add_to_lists, get_lists, clear_lists
 from rlhf import record_feedback, get_stats, reset_weights
@@ -49,6 +49,8 @@ class ScanRequest(BaseModel):
     filter_action: Optional[str] = None
     universe: Optional[str] = None  # "nifty50" | "all" = all India tickers in DB
     save_to_lists: bool = False  # add results to predefined BUY/SELL lists
+    # Subset of indicator ids for composite score (see GET /indicators/catalog). None = use all.
+    indicators: Optional[List[str]] = None
 
 
 @app.get("/")
@@ -73,6 +75,12 @@ def ticker_count_endpoint():
 def nifty50_endpoint():
     """Return all Nifty 50 tickers for scan."""
     return {"tickers": get_nifty50_tickers(), "count": 50}
+
+
+@app.get("/indicators/catalog")
+def indicators_catalog_endpoint():
+    """Ids and labels for manual indicator selection (scoring)."""
+    return {"indicators": INDICATOR_CATALOG}
 
 
 @app.get("/lists")
@@ -133,6 +141,7 @@ def scan_endpoint(req: ScanRequest):
             tickers=tickers,
             period=req.period,
             filter_action=req.filter_action,
+            indicators=req.indicators,
         )
         if req.save_to_lists and results:
             add_to_lists(results)

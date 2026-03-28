@@ -266,6 +266,12 @@
     .feedback-btn:hover { opacity: 1; }
     .feedback-btn.correct { color: var(--buy); }
     .feedback-btn.incorrect { color: var(--sell); }
+    .indicator-panel { margin-top: 1rem; padding: 1rem; background: var(--surface); border-radius: 8px; border: 1px solid var(--border); }
+    .indicator-panel summary { cursor: pointer; font-weight: 600; color: var(--text); }
+    .indicator-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.5rem 1rem; margin-top: 0.75rem; font-size: 0.85rem; }
+    .indicator-grid label { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; color: var(--text-muted); }
+    .indicator-grid input { accent-color: var(--accent); }
+    .scoring-note { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.35rem; }
   </style>
 </head>
 <body>
@@ -300,6 +306,15 @@
         </label>
         <button class="btn btn-primary" id="scanBtn">Scan</button>
       </div>
+      <details class="indicator-panel" id="indicatorPanel">
+        <summary>Manual indicators (optional)</summary>
+        <p style="margin:0.5rem 0 0;font-size:0.85rem;color:var(--text-muted);">Leave collapsed to use <strong>all</strong> indicators for the score. Open and tick only the ones you want to drive BUY/SELL.</p>
+        <label style="display:flex;align-items:center;gap:0.5rem;margin-top:0.75rem;font-size:0.9rem;cursor:pointer;">
+          <input type="checkbox" id="manualIndicatorsOnly" />
+          Use only selected indicators for scoring
+        </label>
+        <div class="indicator-grid" id="indicatorGrid"></div>
+      </details>
       <div class="search-hint">Leave empty for default (India Nifty 50 + Next 50), or choose &quot;All Indian stocks&quot; for the full India list (Nifty 500, Sensex, etc.)</div>
       <div class="status" id="status" style="margin-top: 0.75rem;"></div>
     </section>
@@ -327,6 +342,27 @@
     const API = window.location.origin;
     let lastResults = [];
     let searchTimeout = null;
+
+    async function loadIndicatorCatalog() {
+      const grid = document.getElementById('indicatorGrid');
+      try {
+        const r = await fetch(`${API}/indicators/catalog`);
+        const d = await r.json();
+        const items = d.indicators || [];
+        grid.innerHTML = items.map(it => `
+          <label><input type="checkbox" class="ind-check" value="${it.id}" checked /> ${it.label}</label>
+        `).join('');
+      } catch {
+        grid.innerHTML = '<span style="color:var(--text-muted)">Could not load indicator list.</span>';
+      }
+    }
+
+    function getSelectedIndicators() {
+      const manual = document.getElementById('manualIndicatorsOnly').checked;
+      if (!manual) return undefined;
+      const ids = [...document.querySelectorAll('.ind-check:checked')].map(el => el.value);
+      return ids.length ? ids : undefined;
+    }
 
     async function searchTickers(q) {
       if (!q || q.length < 1) return [];
@@ -400,6 +436,7 @@
             filter_action: filter || undefined,
             universe: universe || undefined,
             save_to_lists: document.getElementById('saveToLists').checked,
+            indicators: getSelectedIndicators(),
           }),
         });
         if (!res.ok) {
@@ -465,6 +502,7 @@
             <div class="card-price">${curr}${price}</div>
             <div class="card-change ${changeCls}">${(r.change_pct != null ? (r.change_pct >= 0 ? '+' : '') + r.change_pct.toFixed(2) : '—')}%</div>
             <div class="score-bar"><div class="score-fill ${scoreCls}" style="width: ${scorePct}%"></div></div>
+            ${(r.indicators_for_score && r.indicators_for_score.length) ? `<div class="scoring-note">Score uses: ${r.indicators_for_score.join(', ')}</div>` : ''}
             <div class="card-meta">
               ${r.rsi != null ? `<span>RSI ${r.rsi}</span>` : ''}
               ${r.stochastic_k != null ? `<span>Stoch ${r.stochastic_k}</span>` : ''}
@@ -564,6 +602,7 @@
     });
 
     document.getElementById('scanBtn').addEventListener('click', scan);
+    loadIndicatorCatalog();
     loadSavedLists();
     document.querySelectorAll('.tab').forEach(tab => {
       tab.addEventListener('click', () => {
