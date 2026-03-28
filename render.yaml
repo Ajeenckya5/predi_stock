@@ -1,12 +1,16 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+# After connect: Dashboard → your service → URL (e.g. https://predi-stock.onrender.com)
 services:
   - type: web
     name: predi_stock
-    env: python
+    runtime: python
+    plan: free
     buildCommand: pip install -r requirements-render.txt
     startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.0
-      # Set NEWSAPI_KEY in the Render dashboard (Environment); do not commit secrets.
+        value: "3.11.0"
+      # Set the value in Render → Environment (secret). Not synced from this file.
       - key: NEWSAPI_KEY
         sync: false

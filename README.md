@@ -20,17 +20,21 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Open **http://localhost:8000**
+Open **http://localhost:8000** (only on your machine while the server is running).
 
 ---
 
-## Deploy on Render
+## Production on Render (public URL)
 
-1. Push the repo to GitHub and connect it to [Render](https://render.com) (New → Web Service).
-2. Use:
-   - **Build:** `pip install -r requirements-render.txt` (lightweight; scanner only)
+The **public site** is whatever URL Render assigns in the dashboard (for example `https://predi-stock.onrender.com` if you named the service that way). It is **not** localhost.
+
+1. Push this repo to GitHub (already: `Ajeenckya5/predi_stock`).
+2. In [Render](https://dashboard.render.com): **New** → **Blueprint** (uses `render.yaml`) **or** **Web Service** → connect `predi_stock`.
+3. If you use **Web Service** manually, set:
+   - **Build:** `pip install -r requirements-render.txt`
    - **Start:** `uvicorn app:app --host 0.0.0.0 --port $PORT`
-3. Deploy. Example live URL: `https://predi-stock.onrender.com`
+4. Optional: **Environment** → add `NEWSAPI_KEY` for ML `/train` / `/agent` (scanner uses Yahoo Finance without it).
+5. Open the **URL** shown at the top of your service page (Render → **predi_stock** → copy link).
 
 `requirements-render.txt` skips heavy deps (e.g. torch/transformers) for fast, low-memory deploy. Scan and news work; for ML train/agent, run locally with full `requirements.txt`.
 
