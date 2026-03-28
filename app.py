@@ -47,8 +47,8 @@ class ScanRequest(BaseModel):
     tickers: Optional[List[str]] = None
     period: str = "3mo"
     filter_action: Optional[str] = None
-    universe: Optional[str] = None  # "nifty50" | "all" = scan all in DB
-    save_to_lists: bool = False  # add results to predefined BUY/SELL/HOLD lists
+    universe: Optional[str] = None  # "nifty50" | "all" = all India tickers in DB
+    save_to_lists: bool = False  # add results to predefined BUY/SELL lists
 
 
 @app.get("/")
@@ -77,20 +77,20 @@ def nifty50_endpoint():
 
 @app.get("/lists")
 def lists_endpoint():
-    """Return predefined BUY / SELL / HOLD lists from stored scan results."""
+    """Return predefined BUY / SELL lists from stored scan results."""
     return get_lists()
 
 
 @app.delete("/lists")
 def clear_lists_endpoint():
-    """Clear stored BUY/SELL/HOLD lists."""
+    """Clear stored BUY/SELL lists."""
     clear_lists()
     return {"status": "cleared"}
 
 
 class FeedbackRequest(BaseModel):
     ticker: str
-    action: str  # BUY | SELL | HOLD
+    action: str  # BUY | SELL
     was_correct: bool
     factors_used: Optional[List[str]] = None
 

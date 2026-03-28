@@ -1,8 +1,8 @@
 """
 Multi-Stock Technical Analysis Scanner
 ======================================
-Scans many stocks using RSI, MACD, Bollinger Bands, and momentum
-to produce BUY/SELL/HOLD signals. No per-ticker training required.
+Scans Indian equities (NSE .NS) using RSI, MACD, Bollinger Bands, and momentum
+to produce BUY or SELL signals only (no HOLD — weak signals resolve by score sign).
 """
 
 import numpy as np
@@ -12,16 +12,8 @@ from typing import List, Dict, Optional
 from dataclasses import dataclass
 
 # ============================================================
-# POPULAR STOCK UNIVERSES (curated for reliability & liquidity)
+# INDIA STOCK UNIVERSES (NSE)
 # ============================================================
-
-SP100_ISHARES = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "BRK-B", "UNH", "JNJ", "JPM",
-    "V", "PG", "XOM", "MA", "HD", "CVX", "MRK", "ABBV", "KO", "PEP",
-    "COST", "LLY", "WMT", "MCD", "CSCO", "ACN", "ABT", "TMO", "AVGO", "DHR",
-    "NEE", "NKE", "BMY", "PM", "RTX", "HON", "INTC", "TXN", "UPS", "QCOM",
-    "LOW", "AMGN", "INTU", "AMAT", "SBUX", "LMT", "ADP", "GILD", "MDLZ", "CAT",
-]
 
 # Nifty 50 - all 50 constituents (Wikipedia Dec 2025)
 NIFTY50 = [
@@ -47,8 +39,8 @@ NIFTY_NEXT50 = [
     "HAVELLS.NS", "SRF.NS", "TATAPOWER.NS", "ABB.NS", "AMBUJACEM.NS",
 ]
 
-# Default universe: US + India (Nifty 50 + Next 50)
-DEFAULT_TICKERS = SP100_ISHARES + NIFTY50 + NIFTY_NEXT50
+# Default scan: Nifty 50 + Nifty Next 50 (India only, de-duplicated)
+DEFAULT_TICKERS = list(dict.fromkeys(NIFTY50 + NIFTY_NEXT50))
 
 
 # ============================================================
@@ -226,9 +218,18 @@ def _get_bb_position(close: float, upper: float, mid: float, lower: float) -> fl
     return 2.0 * (close - mid) / (upper - lower)
 
 
+def _binary_action(score: float) -> str:
+    """Always BUY or SELL: strong thresholds, else weak signals use score sign."""
+    if score >= 0.35:
+        return "BUY"
+    if score <= -0.35:
+        return "SELL"
+    return "BUY" if score >= 0 else "SELL"
+
+
 def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
     """
-    Compute technical indicators and produce a composite BUY/SELL/HOLD signal.
+    Compute technical indicators and produce a composite BUY or SELL signal.
     Uses RSI, MACD, Bollinger Bands, SMA crossover, momentum, volume.
     """
     reasons = []
@@ -236,9 +237,9 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
         data = yf.download(ticker, period=period, progress=False, auto_adjust=True)
         if data.empty or len(data) < 50:
             return SignalResult(
-                ticker=ticker, action="HOLD", score=0, price=0, change_pct=0,
+                ticker=ticker, action="SELL", score=0, price=0, change_pct=0,
                 rsi=None, macd_hist=None, bb_position=None, momentum_10d=None,
-                volume_ratio=None, reasons=["Insufficient data"],
+                volume_ratio=None, reasons=["Insufficient data — defaulting to SELL until data available"],
                 buy_zone=None, stop_loss=None, take_profit=None, support=None, resistance=None,
                 news=[], news_sentiment=None, news_impact=None, pattern_signals=None, pattern_score=None,
                 factors_used=None, error="Not enough history",
@@ -496,16 +497,8 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
         else:
             score = 0
 
-        # BUY/SELL/HOLD: require clear signal (threshold 0.35)
-        # BUY = bullish factors dominate (RSI oversold, MACD up, price at support, etc.)
-        # SELL = bearish factors dominate (RSI overbought, MACD down, resistance, etc.)
-        # HOLD = mixed or weak signals
-        if score >= 0.35:
-            action = "BUY"
-        elif score <= -0.35:
-            action = "SELL"
-        else:
-            action = "HOLD"
+        # BUY or SELL only (no HOLD — weak band maps by score sign)
+        action = _binary_action(float(score))
 
         # Support / Resistance (20-day low/high)
         low_20 = float(close.rolling(20).min().iloc[-1]) if len(close) >= 20 else price * 0.97
@@ -522,14 +515,10 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
             buy_zone = (support, min(price * 1.01, support * 1.03))
             stop_loss = support - atr * 1.5
             take_profit = resistance + atr * 0.5
-        elif action == "SELL":
+        else:
             buy_zone = None
             stop_loss = high_20 + atr * 1.5
             take_profit = support - atr * 0.5
-        else:
-            buy_zone = (support, resistance)
-            stop_loss = support - atr
-            take_profit = resistance + atr
 
         # Target timeline: estimate days to reach TP (or SL for SELL)
         target_price = take_profit if action == "BUY" else stop_loss
@@ -597,9 +586,9 @@ def analyze_ticker(ticker: str, period: str = "3mo") -> SignalResult:
 
     except Exception as e:
         return SignalResult(
-            ticker=ticker, action="HOLD", score=0, price=0, change_pct=0,
+            ticker=ticker, action="SELL", score=0, price=0, change_pct=0,
             rsi=None, macd_hist=None, bb_position=None, momentum_10d=None,
-            volume_ratio=None, reasons=[],
+            volume_ratio=None, reasons=[f"Error: {str(e)}"],
             buy_zone=None, stop_loss=None, take_profit=None, support=None, resistance=None,
             news=[], news_sentiment=None, news_impact=None, pattern_signals=None, pattern_score=None,
             factors_used=None, error=str(e)

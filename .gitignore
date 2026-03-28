@@ -19,6 +19,7 @@ build/
 *.pkl
 *.pickle
 .ticker_cache.csv
+.ticker_cache_india.csv
 .signals_store.json
 .rlhf_weights.json
 .rlhf_feedback.json

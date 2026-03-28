@@ -1,6 +1,6 @@
 # Stock Signal Scanner (predi_stock)
 
-A **stock buy & sell signal scanner** using **technical analysis** (RSI, MACD, Bollinger Bands, momentum) with an optional **ML-based agent** for predictions. Includes a web UI and REST API.
+A **buy/sell signal scanner for Indian (NSE) equities** using **technical analysis** (RSI, MACD, Bollinger Bands, momentum) with an optional **ML-based agent** for predictions. Includes a web UI and REST API. Signals are **BUY or SELL only** (no HOLD).
 
 ---
 

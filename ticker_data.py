@@ -1,15 +1,15 @@
 """
 Stock Ticker Database & Search
 ==============================
-Fetches S&P 500, Nifty 50, Nifty Next 50, Nifty 500 from Wikipedia.
-Provides search by symbol or company name.
+Fetches Indian indices from Wikipedia (Nifty 50, Nifty Next 50, Nifty 500, BSE Sensex).
+Search is India-only (.NS / NSE). No US or international listings.
 """
 
 import pandas as pd
 from typing import List, Dict
 import os
 
-_CACHE_PATH = os.path.join(os.path.dirname(__file__), ".ticker_cache.csv")
+_CACHE_PATH = os.path.join(os.path.dirname(__file__), ".ticker_cache_india.csv")
 
 
 def _nse_symbol(sym: str) -> str:
@@ -18,18 +18,6 @@ def _nse_symbol(sym: str) -> str:
     if not s.endswith(".NS") and not s.endswith(".BO"):
         return s + ".NS"
     return s
-
-
-def _fetch_sp500() -> pd.DataFrame:
-    """Fetch S&P 500 constituents from Wikipedia."""
-    try:
-        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        dfs = pd.read_html(url)
-        df = dfs[0][["Symbol", "Security"]].rename(columns={"Symbol": "symbol", "Security": "name"})
-        df["symbol"] = df["symbol"].str.replace(".", "-", regex=False)
-        return df
-    except Exception:
-        return pd.DataFrame(columns=["symbol", "name"])
 
 
 def _fetch_nifty50() -> pd.DataFrame:
@@ -89,23 +77,6 @@ def _fetch_bse_sensex30() -> pd.DataFrame:
         return pd.DataFrame(columns=["symbol", "name"])
 
 
-def _fetch_russell1000_sample() -> pd.DataFrame:
-    """Fetch Russell 1000 sample from Wikipedia (top holdings)."""
-    try:
-        url = "https://en.wikipedia.org/wiki/Russell_1000_Index"
-        dfs = pd.read_html(url)
-        for d in dfs:
-            if len(d) > 50 and ("Symbol" in d.columns or "Ticker" in d.columns):
-                sym_col = "Symbol" if "Symbol" in d.columns else "Ticker"
-                name_col = next((c for c in d.columns if "company" in str(c).lower() or "name" in str(c).lower()), d.columns[1])
-                df = d[[sym_col, name_col]].rename(columns={sym_col: "symbol", name_col: "name"})
-                df["symbol"] = df["symbol"].astype(str).str.strip().str.replace(".", "-", regex=False)
-                return df.dropna(subset=["symbol", "name"])
-        return pd.DataFrame(columns=["symbol", "name"])
-    except Exception:
-        return pd.DataFrame(columns=["symbol", "name"])
-
-
 # BSE Sensex 30 fallback (many overlap with Nifty)
 BSE_SENSEX30_FALLBACK = [
     ("RELIANCE.NS", "Reliance"), ("TCS.NS", "TCS"), ("HDFCBANK.NS", "HDFC Bank"),
@@ -117,19 +88,6 @@ BSE_SENSEX30_FALLBACK = [
     ("BAJFINANCE.NS", "Bajaj Finance"), ("NESTLEIND.NS", "Nestle"), ("TITAN.NS", "Titan"),
     ("ULTRACEMCO.NS", "UltraTech"), ("TATASTEEL.NS", "Tata Steel"), ("POWERGRID.NS", "Power Grid"),
 ]
-
-# Russell 1000 top US names (when Wikipedia fails)
-RUSSELL1000_SAMPLE = [
-    ("AAPL", "Apple"), ("MSFT", "Microsoft"), ("GOOGL", "Alphabet"), ("AMZN", "Amazon"),
-    ("NVDA", "NVIDIA"), ("META", "Meta"), ("BRK-B", "Berkshire"), ("JPM", "JPMorgan"),
-    ("V", "Visa"), ("UNH", "UnitedHealth"), ("JNJ", "Johnson & Johnson"), ("PG", "P&G"),
-    ("MA", "Mastercard"), ("HD", "Home Depot"), ("XOM", "ExxonMobil"), ("CVX", "Chevron"),
-    ("PEP", "PepsiCo"), ("KO", "Coca-Cola"), ("COST", "Costco"), ("LLY", "Eli Lilly"),
-    ("WMT", "Walmart"), ("MCD", "McDonald's"), ("ABBV", "AbbVie"), ("MRK", "Merck"),
-    ("AVGO", "Broadcom"), ("TMO", "Thermo Fisher"), ("ORCL", "Oracle"), ("DIS", "Disney"),
-    ("CRM", "Salesforce"), ("ADBE", "Adobe"), ("NEE", "NextEra"), ("ACN", "Accenture"),
-]
-
 
 def _fetch_nifty500() -> pd.DataFrame:
     """Fetch Nifty 500 (or NIFTY 200) from Wikipedia if available."""
@@ -153,7 +111,7 @@ def _fetch_nifty500() -> pd.DataFrame:
     return pd.DataFrame(columns=["symbol", "name"])
 
 
-# Static fallback: full Nifty 50 + Nifty Next 50 + popular US (when Wikipedia fails)
+# Static fallback when Wikipedia fails (India NSE)
 INDIAN_FALLBACK = [
     ("RELIANCE.NS", "Reliance Industries"), ("TCS.NS", "Tata Consultancy"), ("HDFCBANK.NS", "HDFC Bank"),
     ("INFY.NS", "Infosys"), ("HINDUNILVR.NS", "Hindustan Unilever"), ("ICICIBANK.NS", "ICICI Bank"),
@@ -182,17 +140,11 @@ INDIAN_FALLBACK = [
     ("UBL.NS", "United Breweries"), ("VOLTAS.NS", "Voltas"), ("BALKRISIND.NS", "Balkrishna Ind"),
 ]
 
-US_FALLBACK = [
-    ("AAPL", "Apple Inc."), ("MSFT", "Microsoft"), ("GOOGL", "Alphabet"), ("AMZN", "Amazon"),
-    ("NVDA", "NVIDIA"), ("META", "Meta"), ("TSLA", "Tesla"), ("JPM", "JPMorgan Chase"),
-    ("V", "Visa"), ("WMT", "Walmart"), ("JNJ", "Johnson & Johnson"), ("PG", "Procter & Gamble"),
-]
-
-FALLBACK_TICKERS = INDIAN_FALLBACK + US_FALLBACK
+FALLBACK_TICKERS = INDIAN_FALLBACK + BSE_SENSEX30_FALLBACK
 
 
 def load_all_tickers() -> pd.DataFrame:
-    """Load full ticker list: S&P 500 + Nifty 50 + Nifty Next 50 + Nifty 500, with cache."""
+    """Load full India ticker list: Nifty 50, Next 50, Nifty 500, BSE Sensex (with cache)."""
     if os.path.exists(_CACHE_PATH):
         try:
             return pd.read_csv(_CACHE_PATH)
@@ -200,10 +152,6 @@ def load_all_tickers() -> pd.DataFrame:
             pass
 
     dfs = []
-    sp = _fetch_sp500()
-    if not sp.empty:
-        dfs.append(sp)
-
     n50 = _fetch_nifty50()
     if not n50.empty:
         dfs.append(n50)
@@ -216,16 +164,12 @@ def load_all_tickers() -> pd.DataFrame:
     if not bse30.empty:
         dfs.append(bse30)
 
-    russell = _fetch_russell1000_sample()
-    if not russell.empty:
-        dfs.append(russell)
-
     n500 = _fetch_nifty500()
     if not n500.empty and len(n500) > 50:
         dfs.append(n500)
 
     fallback = pd.DataFrame(
-        FALLBACK_TICKERS + BSE_SENSEX30_FALLBACK + RUSSELL1000_SAMPLE,
+        FALLBACK_TICKERS,
         columns=["symbol", "name"],
     )
     if dfs:

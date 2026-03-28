@@ -1,7 +1,7 @@
 """
 RLHF - Reinforcement Learning from Human Feedback
 =================================================
-Collects user feedback on BUY/SELL/HOLD signals and adapts factor weights
+Collects user feedback on BUY/SELL signals and adapts factor weights
 so the algorithm keeps improving.
 """
 

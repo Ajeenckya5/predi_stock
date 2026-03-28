@@ -273,15 +273,15 @@
     <header>
       <div>
         <h1 class="logo">predi_stock</h1>
-        <span class="badge">Signals • News • RLHF • Improves with feedback</span>
+        <span class="badge">India (NSE) • BUY/SELL only • News • RLHF</span>
       </div>
     </header>
 
     <section class="section">
-      <div class="section-title">Search any stock & get BUY / SELL signals</div>
+      <div class="section-title">Search Indian stocks & get BUY / SELL signals</div>
       <div class="scan-bar">
         <div class="search-wrap">
-          <input type="text" id="tickers" placeholder="Type symbol (AAPL) or company name (Apple) — search 500+ stocks" autocomplete="off" />
+          <input type="text" id="tickers" placeholder="e.g. RELIANCE.NS, TCS, or company name — India NSE" autocomplete="off" />
           <div class="autocomplete" id="autocomplete" style="display:none;"></div>
         </div>
         <select id="filter">
@@ -290,9 +290,9 @@
           <option value="SELL">Sell only</option>
         </select>
         <select id="universe">
-          <option value="">Default (US + India)</option>
+          <option value="">Default (Nifty 50 + Next 50)</option>
           <option value="nifty50">Nifty 50 only</option>
-          <option value="all">All stocks</option>
+          <option value="all">All Indian stocks (DB)</option>
         </select>
         <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.9rem;cursor:pointer;">
           <input type="checkbox" id="saveToLists" />
@@ -300,7 +300,7 @@
         </label>
         <button class="btn btn-primary" id="scanBtn">Scan</button>
       </div>
-      <div class="search-hint">Leave empty to scan default (US + India), or choose "All stocks" to scan S&P 500 + Nifty 50/Next 50/500 + BSE Sensex + Russell 1000</div>
+      <div class="search-hint">Leave empty for default (India Nifty 50 + Next 50), or choose &quot;All Indian stocks&quot; for the full India list (Nifty 500, Sensex, etc.)</div>
       <div class="status" id="status" style="margin-top: 0.75rem;"></div>
     </section>
 
@@ -429,7 +429,7 @@
         return;
       }
 
-      const currSym = (t) => (t || '').includes('.NS') ? '₹' : '$';
+      const currSym = () => '₹';
       const fmt = (v) => v != null ? (typeof v === 'number' ? v.toFixed(2) : v) : '—';
       container.innerHTML = '<div class="grid">' + list.map((r, i) => {
         const changeCls = (r.change_pct || 0) >= 0 ? 'up' : 'down';
@@ -460,7 +460,7 @@
           <div class="card">
             <div class="card-header">
               <span class="card-ticker">${r.ticker}</span>
-              <span class="card-action ${(r.action || '').toLowerCase()}">${r.action || 'HOLD'}</span>
+              <span class="card-action ${(r.action || '').toLowerCase()}">${r.action || 'BUY'}</span>
             </div>
             <div class="card-price">${curr}${price}</div>
             <div class="card-change ${changeCls}">${(r.change_pct != null ? (r.change_pct >= 0 ? '+' : '') + r.change_pct.toFixed(2) : '—')}%</div>
@@ -478,8 +478,8 @@
             ${reasons ? `<div class="card-reasons">${reasons}</div>` : ''}
             <div class="feedback-row">
               <span>Help algo improve:</span>
-              <button class="feedback-btn correct" title="Correct" data-ticker="${r.ticker}" data-action="${r.action || 'HOLD'}" data-correct="true" data-factors="${(r.factors_used || []).join(',')}">👍</button>
-              <button class="feedback-btn incorrect" title="Incorrect" data-ticker="${r.ticker}" data-action="${r.action || 'HOLD'}" data-correct="false" data-factors="${(r.factors_used || []).join(',')}">👎</button>
+              <button class="feedback-btn correct" title="Correct" data-ticker="${r.ticker}" data-action="${r.action || 'BUY'}" data-correct="true" data-factors="${(r.factors_used || []).join(',')}">👍</button>
+              <button class="feedback-btn incorrect" title="Incorrect" data-ticker="${r.ticker}" data-action="${r.action || 'SELL'}" data-correct="false" data-factors="${(r.factors_used || []).join(',')}">👎</button>
             </div>
             <button class="expand-btn" onclick="document.getElementById('${cardId}').classList.toggle('open'); this.textContent = document.getElementById('${cardId}').classList.contains('open') ? '▼ Less' : '▶ Full details (Buy/SL/TP, News)';">▶ Full details (Buy/SL/TP, News)</button>
             <div class="card-detail detail-section" id="${cardId}">
@@ -529,7 +529,7 @@
           return;
         }
         document.getElementById('savedListsSection').style.display = 'block';
-        const curr = (t) => (t || '').includes('.NS') ? '₹' : '$';
+        const curr = () => '₹';
         const fmt = (v) => v != null ? (typeof v === 'number' ? v.toFixed(2) : v) : '—';
         const row = (arr, cls) => arr.slice(0, 20).map(x => `<div class="news-item">${x.ticker} ${curr}${fmt(x.price)} ${x.score != null ? '(' + x.score + ')' : ''}</div>`).join('') || '<div class="news-item" style="color:var(--text-muted)">Empty</div>';
         document.getElementById('savedLists').innerHTML = `
