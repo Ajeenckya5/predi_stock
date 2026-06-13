@@ -12,7 +12,9 @@ from typing import Dict, List, Optional
 
 _STORE_PATH = os.path.join(os.path.dirname(__file__), ".rlhf_weights.json")
 
-# Default factor weights (sum to ~1 for normalization)
+# Default factor weights. Must cover every id in scanner.ALL_SCORING_INDICATORS,
+# otherwise feedback on those factors (stochastic, williams_r, cci, adx, obv,
+# stoch_rsi) is silently dropped by record_feedback.
 DEFAULT_WEIGHTS = {
     "rsi": 1.0,
     "macd": 1.0,
@@ -20,6 +22,12 @@ DEFAULT_WEIGHTS = {
     "sma": 1.0,
     "momentum": 1.0,
     "volume": 1.0,
+    "stochastic": 1.0,
+    "williams_r": 1.0,
+    "cci": 1.0,
+    "adx": 1.0,
+    "obv": 1.0,
+    "stoch_rsi": 1.0,
     "pattern": 1.0,
     "news": 1.0,
 }
@@ -75,6 +83,10 @@ def record_feedback(
     factors_present: which factors contributed (rsi, macd, bollinger, sma, momentum, volume, pattern, news)
     """
     weights = _load_weights()
+    # Backfill any factor weights missing from an older saved file (e.g. extended
+    # indicators added later) so feedback on them isn't silently dropped below.
+    for k, v in DEFAULT_WEIGHTS.items():
+        weights.setdefault(k, v)
     feedback_list = _load_feedback()
 
     factors = factors_present or list(weights.keys())

@@ -63,6 +63,9 @@ def add_to_lists(results: List[Dict]) -> Dict[str, Dict[str, Any]]:
             action = "BUY"
         elif raw == "SELL":
             action = "SELL"
+        elif raw == "ERROR":
+            # No usable signal (insufficient data / fetch error) — don't store it.
+            continue
         else:
             sc = r.get("score")
             try:

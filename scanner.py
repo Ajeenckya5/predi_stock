@@ -11,6 +11,7 @@ import yfinance as yf
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 from urllib.parse import urljoin
+from concurrent.futures import ThreadPoolExecutor
 
 # Yahoo Finance news base (yfinance often returns protocol-relative or site-relative links)
 _YAHOO_NEWS_ORIGIN = "https://finance.yahoo.com"
@@ -37,11 +38,48 @@ def normalize_news_url(raw: str) -> str:
         return _YAHOO_NEWS_ORIGIN + u
     return urljoin(_YAHOO_NEWS_ORIGIN + "/", u)
 
+
+def _extract_news_fields(n) -> Dict[str, str]:
+    """
+    Normalize a yfinance news item to {title, url, publisher, summary}.
+    Supports BOTH the legacy flat schema ({title, link, publisher}) and the
+    current nested schema ({content: {title, canonicalUrl: {url}, provider: {displayName}}}).
+    Without this, modern yfinance returns empty titles/URLs and news sentiment is always 0.
+    """
+    if not isinstance(n, dict):
+        return {"title": "", "url": "", "publisher": "", "summary": ""}
+    content = n.get("content") if isinstance(n.get("content"), dict) else {}
+    title = n.get("title") or content.get("title") or ""
+    url = n.get("link") or n.get("url") or ""
+    if not url:
+        for key in ("canonicalUrl", "clickThroughUrl"):
+            u = content.get(key)
+            if isinstance(u, dict) and u.get("url"):
+                url = u["url"]
+                break
+            if isinstance(u, str) and u:
+                url = u
+                break
+    publisher = n.get("publisher") or n.get("source") or ""
+    if not publisher:
+        prov = content.get("provider")
+        if isinstance(prov, dict):
+            publisher = prov.get("displayName") or ""
+    summary = (
+        n.get("summary") or n.get("description")
+        or content.get("summary") or content.get("description") or ""
+    )
+    return {
+        "title": str(title), "url": str(url),
+        "publisher": str(publisher), "summary": str(summary),
+    }
+
 # ============================================================
 # INDIA STOCK UNIVERSES (NSE)
 # ============================================================
 
-# Nifty 50 - all 50 constituents (Wikipedia Dec 2025)
+# Nifty 50 - all 50 constituents (Wikipedia, as of 8 Dec 2025)
+# Note: TMPV (Tata Motors Passenger Vehicles) replaced TATAMOTORS after the demerger.
 NIFTY50 = [
     "ADANIENT.NS", "ADANIPORTS.NS", "APOLLOHOSP.NS", "ASIANPAINT.NS", "AXISBANK.NS",
     "BAJAJ-AUTO.NS", "BAJFINANCE.NS", "BAJAJFINSV.NS", "BEL.NS", "BHARTIARTL.NS",
@@ -51,18 +89,22 @@ NIFTY50 = [
     "JIOFIN.NS", "JSWSTEEL.NS", "KOTAKBANK.NS", "LT.NS", "M&M.NS",
     "MARUTI.NS", "MAXHEALTH.NS", "NESTLEIND.NS", "NTPC.NS", "ONGC.NS",
     "POWERGRID.NS", "RELIANCE.NS", "SBILIFE.NS", "SBIN.NS", "SHRIRAMFIN.NS",
-    "SUNPHARMA.NS", "TCS.NS", "TATACONSUM.NS", "TATAMOTORS.NS", "TATASTEEL.NS",
+    "SUNPHARMA.NS", "TCS.NS", "TATACONSUM.NS", "TMPV.NS", "TATASTEEL.NS",
     "TECHM.NS", "TITAN.NS", "TRENT.NS", "ULTRACEMCO.NS", "WIPRO.NS",
 ]
+# Nifty Next 50 - official constituents (Wikipedia / NSE, as of 30 Sep 2025 rebalance).
+# The previous list here wrongly repeated 19 Nifty 50 names and missed most real members.
 NIFTY_NEXT50 = [
-    "ADANIENT.NS", "APOLLOHOSP.NS", "BEL.NS", "CIPLA.NS", "COALINDIA.NS",
-    "DRREDDY.NS", "EICHERMOT.NS", "GRASIM.NS", "HDFCLIFE.NS", "HINDALCO.NS",
-    "INDIGO.NS", "JSWSTEEL.NS", "JIOFIN.NS", "MAXHEALTH.NS", "SHRIRAMFIN.NS",
-    "SBILIFE.NS", "TATACONSUM.NS", "TECHM.NS", "TRENT.NS",
-    "DIVISLAB.NS", "DABUR.NS", "PIDILITIND.NS", "HEROMOTOCO.NS", "BAJAJ-AUTO.NS",
-    "BRITANNIA.NS", "BANKBARODA.NS", "BHEL.NS", "BPCL.NS", "IOC.NS",
-    "VEDL.NS", "MUTHOOTFIN.NS", "AUROPHARMA.NS", "TORNTPHARM.NS", "SIEMENS.NS",
-    "HAVELLS.NS", "SRF.NS", "TATAPOWER.NS", "ABB.NS", "AMBUJACEM.NS",
+    "ABB.NS", "ADANIENSOL.NS", "ADANIGREEN.NS", "ADANIPOWER.NS", "AMBUJACEM.NS",
+    "BAJAJHLDNG.NS", "BAJAJHFL.NS", "BANKBARODA.NS", "BPCL.NS", "BRITANNIA.NS",
+    "BOSCHLTD.NS", "CANBK.NS", "CGPOWER.NS", "CHOLAFIN.NS", "DIVISLAB.NS",
+    "DLF.NS", "DMART.NS", "GAIL.NS", "GODREJCP.NS", "HAVELLS.NS",
+    "HAL.NS", "HINDZINC.NS", "HYUNDAI.NS", "ICICIGI.NS", "INDHOTEL.NS",
+    "IOC.NS", "NAUKRI.NS", "IRFC.NS", "JINDALSTEL.NS", "JSWENERGY.NS",
+    "LICI.NS", "LODHA.NS", "LTIM.NS", "MAZDOCK.NS", "PIDILITIND.NS",
+    "PFC.NS", "PNB.NS", "RECLTD.NS", "MOTHERSON.NS", "SHREECEM.NS",
+    "SIEMENS.NS", "ENRIN.NS", "SOLARINDS.NS", "TATAPOWER.NS", "TORNTPHARM.NS",
+    "TVSMOTOR.NS", "UNITDSPR.NS", "VBL.NS", "VEDL.NS", "ZYDUSLIFE.NS",
 ]
 
 # Default scan: Nifty 50 + Nifty Next 50 (India only, de-duplicated)
@@ -74,11 +116,13 @@ DEFAULT_TICKERS = list(dict.fromkeys(NIFTY50 + NIFTY_NEXT50))
 # ============================================================
 
 def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
+    """Wilder's RSI (EWM with alpha=1/period) — matches standard charting platforms.
+    A plain rolling mean overstates oscillation vs. the canonical definition."""
     delta = close.diff()
     gain = delta.where(delta > 0, 0.0)
     loss = -delta.where(delta < 0, 0.0)
-    avg_gain = gain.rolling(window=period).mean()
-    avg_loss = loss.rolling(window=period).mean()
+    avg_gain = gain.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
     rs = avg_gain / (avg_loss + 1e-10)
     rsi = 100 - (100 / (1 + rs))
     return rsi
@@ -123,7 +167,8 @@ def compute_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int =
     tr2 = (high - close.shift(1)).abs()
     tr3 = (low - close.shift(1)).abs()
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    return tr.rolling(period).mean()
+    # Wilder smoothing (standard ATR), not a simple rolling mean
+    return tr.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
 
 
 def _get_extended_indicators(high, low, close, volume):
@@ -232,6 +277,14 @@ ALL_SCORING_INDICATORS = frozenset({
     "pattern", "news",
 })
 
+# Maximum absolute contribution of each factor to the raw score (before RLHF weight).
+# Used to normalize the composite into [-1, 1] as "consensus of fired evidence".
+_FACTOR_CAPS = {
+    "rsi": 0.8, "macd": 0.5, "bollinger": 0.6, "sma": 0.4, "momentum": 0.3,
+    "volume": 0.2, "stochastic": 0.4, "williams_r": 0.35, "cci": 0.3,
+    "adx": 0.25, "obv": 0.2, "stoch_rsi": 0.35, "pattern": 0.5, "news": 0.6,
+}
+
 INDICATOR_ALIASES = {
     "williams": "williams_r",
     "williams_percent_r": "williams_r",
@@ -329,11 +382,13 @@ def analyze_ticker(
     reasons = []
     try:
         data = yf.download(ticker, period=period, progress=False, auto_adjust=True)
-        if data.empty or len(data) < 50:
+        if data.empty or len(data) < 30:
+            # IMPORTANT: no data is NOT a sell signal. Mark as ERROR so it never
+            # pollutes the SELL list or RLHF feedback.
             return SignalResult(
-                ticker=ticker, action="SELL", score=0, price=0, change_pct=0,
+                ticker=ticker, action="ERROR", score=0, price=0, change_pct=0,
                 rsi=None, macd_hist=None, bb_position=None, momentum_10d=None,
-                volume_ratio=None, reasons=["Insufficient data — defaulting to SELL until data available"],
+                volume_ratio=None, reasons=["Insufficient price history (<30 bars) — no signal"],
                 buy_zone=None, stop_loss=None, take_profit=None, support=None, resistance=None,
                 news=[], news_sentiment=None, news_impact=None, pattern_signals=None, pattern_score=None,
                 factors_used=None, error="Not enough history",
@@ -480,7 +535,7 @@ def analyze_ticker(
 
         # Williams %R: < -80 oversold, > -20 overbought
         if scoring_active("williams_r", enabled) and williams_r is not None:
-            w = weights.get("williams", 1.0)
+            w = weights.get("williams_r", 1.0)  # key must match factors_used / RLHF store
             factors_used.append("williams_r")
             if williams_r < -80:
                 score += 0.35 * w
@@ -570,10 +625,11 @@ def analyze_ticker(
             from news_analysis import analyze_news_sentiment
             news_list_for_analysis = []
             for n in (raw_news or []):
+                f = _extract_news_fields(n)
                 news_list_for_analysis.append({
-                    "title": n.get("title") or n.get("link") or "",
-                    "description": n.get("description", ""),
-                    "content": n.get("content", ""),
+                    "title": f["title"],
+                    "description": f["summary"],
+                    "content": "",
                 })
             news_result = analyze_news_sentiment(news_list_for_analysis)
             news_sentiment_val = news_result["sentiment_score"]
@@ -586,12 +642,19 @@ def analyze_ticker(
         except Exception:
             pass
 
-        n_factors = len(factors_used) if factors_used else 1
-        # Normalize score to [-1, 1] - balanced so BUY/SELL require clear majority
-        if n_factors > 0:
-            score = np.clip(score / max(n_factors * 0.45, 1), -1, 1)
+        # Normalize to [-1, 1]: raw score / max possible score of the factors that
+        # actually fired = "evidence consensus". A shrinkage term damps signals
+        # backed by only 1-2 factors so a single mild indicator can't look strong.
+        n_fired = len(factors_used)
+        max_contrib = sum(
+            _FACTOR_CAPS.get(f, 0.5) * weights.get(f, 1.0) for f in factors_used
+        )
+        if n_fired > 0 and max_contrib > 1e-9:
+            consensus = score / max_contrib
+            shrink = n_fired / (n_fired + 2.0)
+            score = float(np.clip(consensus * shrink, -1, 1))
         else:
-            score = 0
+            score = 0.0
 
         # BUY or SELL only (no HOLD — weak band maps by score sign)
         action = _binary_action(float(score))
@@ -609,17 +672,22 @@ def analyze_ticker(
         # Buy zone, SL, TP by action
         if action == "BUY":
             buy_zone = (support, min(price * 1.01, support * 1.03))
-            stop_loss = support - atr * 1.5
+            stop_loss = max(support - atr * 1.5, 0.01)
             take_profit = resistance + atr * 0.5
         else:
             buy_zone = None
             stop_loss = high_20 + atr * 1.5
-            take_profit = support - atr * 0.5
+            take_profit = max(support - atr * 0.5, 0.01)
 
-        # Target timeline: estimate days to reach TP (or SL for SELL)
+        # Target timeline: estimate days to reach TP (or SL for SELL).
+        # Use the 20-day average absolute daily move, not just yesterday's change
+        # (a single day is far too noisy to extrapolate from).
         target_price = take_profit if action == "BUY" else stop_loss
         atr_pct = (atr / price) * 100
-        daily_return_pct = abs(change_pct) if change_pct != 0 else atr_pct
+        recent_abs_ret = close.pct_change().abs().tail(20)
+        daily_return_pct = float(recent_abs_ret.mean() * 100) if len(recent_abs_ret) else atr_pct
+        if not np.isfinite(daily_return_pct) or daily_return_pct <= 0:
+            daily_return_pct = atr_pct
         try:
             from indicators import compute_target_days
             target_days = compute_target_days(price, target_price, daily_return_pct, atr_pct)
@@ -631,13 +699,13 @@ def analyze_ticker(
         # Build news list from raw_news — absolute external URLs only (see normalize_news_url)
         news_list = []
         for n in (raw_news or [])[:8]:
-            raw_url = n.get("link") or n.get("url") or ""
-            url = normalize_news_url(str(raw_url))
-            title = (n.get("title") or "").strip() or "Yahoo Finance article"
+            f = _extract_news_fields(n)
+            url = normalize_news_url(f["url"])
+            title = f["title"].strip() or "Yahoo Finance article"
             news_list.append({
                 "title": title[:120],
                 "url": url,
-                "publisher": n.get("publisher") or n.get("source") or "",
+                "publisher": f["publisher"],
             })
 
         return SignalResult(
@@ -680,9 +748,9 @@ def analyze_ticker(
 
     except Exception as e:
         return SignalResult(
-            ticker=ticker, action="SELL", score=0, price=0, change_pct=0,
+            ticker=ticker, action="ERROR", score=0, price=0, change_pct=0,
             rsi=None, macd_hist=None, bb_position=None, momentum_10d=None,
-            volume_ratio=None, reasons=[f"Error: {str(e)}"],
+            volume_ratio=None, reasons=[f"Error: {str(e)} — no signal"],
             buy_zone=None, stop_loss=None, take_profit=None, support=None, resistance=None,
             news=[], news_sentiment=None, news_impact=None, pattern_signals=None, pattern_score=None,
             factors_used=None, error=str(e),
@@ -702,9 +770,19 @@ def scan_tickers(
     indicators: optional subset of factor ids for scoring (manual mode); None = all.
     """
     tickers = tickers or DEFAULT_TICKERS
+    # Parallel fetch+analyze: sequential scans of 90+ tickers took minutes.
+    # Order of results matches the input ticker order.
+    max_workers = min(8, max(1, len(tickers)))
+    if max_workers > 1:
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            analyzed = list(ex.map(
+                lambda t: analyze_ticker(t, period=period, indicators=indicators), tickers
+            ))
+    else:
+        analyzed = [analyze_ticker(t, period=period, indicators=indicators) for t in tickers]
+
     results = []
-    for t in tickers:
-        r = analyze_ticker(t, period=period, indicators=indicators)
+    for r in analyzed:
         buy_zone_ser = [round(r.buy_zone[0], 2), round(r.buy_zone[1], 2)] if r.buy_zone else None
         d = {
             "ticker": r.ticker,
